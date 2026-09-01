@@ -1,0 +1,41 @@
+[package]
+name = "cf-gears-toolkit-sdk"
+version = "0.7.6"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ToolKit SDK"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "cf-gears-toolkit"]
+categories = ["development-tools"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "toolkit_sdk"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+derive = ["dep:toolkit-odata-macros"]
+
+[dependencies]
+# Project-local crates
+toolkit-security = { workspace = true }
+toolkit-odata = { workspace = true }
+toolkit-odata-macros = { workspace = true, optional = true }
+
+# Core deps
+futures-core = { workspace = true }
+pin-project-lite = { workspace = true }
+
+# Optional feature dependencies
+uuid = { workspace = true, features = ["v7"], optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+futures-util = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }

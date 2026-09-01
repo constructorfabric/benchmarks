@@ -1,0 +1,43 @@
+[package]
+name = "cf-gears-grpc-hub"
+version = "0.2.18"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "gRPC Hub module"
+repository.workspace = true
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears"]
+categories = ["network-programming"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "grpc_hub"
+
+[lints]
+workspace = true
+
+[dependencies]
+toolkit = { workspace = true }
+toolkit-transport-grpc = { workspace = true }
+cf-gears-system-sdks = { workspace = true }
+inventory = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+parking_lot = { workspace = true }
+http = { workspace = true }
+
+# gRPC server
+tonic = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+uuid = { workspace = true }

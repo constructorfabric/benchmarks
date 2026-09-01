@@ -1,0 +1,57 @@
+# Created: 2026-04-16 by Constructor Tech
+[package]
+name = "cf-gears-resource-group-sdk"
+version = "0.2.6"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "SDK for resource-group gear: API trait, types, and error definitions"
+repository.workspace = true
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "resource-group"]
+categories = ["api-bindings"]
+metadata.docs.rs.all-features = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["odata"]
+odata = ["dep:toolkit-odata-macros"]
+
+[dependencies]
+# Per ADR 0005 the trait boundary is `CanonicalError`; the SDK ships
+# `ResourceGroupError` as an opt-in `From<CanonicalError>` projection
+# (see src/error.rs). The single AIP-193 ladder
+# (`From<DomainError> for CanonicalError`) lives in the impl crate's
+# `api::rest::error`; this SDK depends on the canonical-errors crate to
+# project that envelope into the typed view.
+toolkit-canonical-errors = { workspace = true }
+
+# Core dependencies for API trait
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+
+# OData macros (for #[derive(ODataFilterable)])
+toolkit-odata-macros = { workspace = true, optional = true }
+
+# UUID support
+uuid = { workspace = true }
+
+# Security context for API methods
+toolkit-security = { workspace = true }
+
+# OData support for pagination and query types (required for API trait)
+toolkit-odata = { workspace = true }
+
+# GTS type system — ID parsing and validation
+gts = { workspace = true }
+
+# ToolKit GTS — #[gts_type_schema(...)] wrapper that also submits to the
+# process-wide inventory consumed by types-registry at startup.
+toolkit-gts = { workspace = true }
+
+# JSON Schema (required by struct_to_gts_schema)
+schemars = { workspace = true }

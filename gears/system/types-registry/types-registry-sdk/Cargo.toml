@@ -1,0 +1,46 @@
+[package]
+name = "cf-gears-types-registry-sdk"
+version = "0.3.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "SDK for types-registry gear: API trait, GTS entity types, and error definitions"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears"]
+categories = ["development-tools"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "types_registry_sdk"
+
+[lints]
+workspace = true
+
+[features]
+# Default: production build, no test utilities.
+default = []
+# Exposes `pub mod testing` with a stateful `MockTypesRegistryClient` mock for
+# consumers that need a `dyn TypesRegistryClient` in their unit tests.
+test-util = []
+
+[dependencies]
+# Per ADR 0005 the `TypesRegistryClient` trait boundary is `CanonicalError`;
+# the SDK ships `TypesRegistryError` as an opt-in `From<CanonicalError>`
+# projection (see src/error.rs). The single AIP-193 ladder
+# (`From<DomainError> for CanonicalError`) lives in the impl crate's
+# `api::rest::error`; this SDK depends on the canonical-errors crate to
+# project that envelope into the typed view (and to construct the in-process
+# `InvalidArgument` errors its client-side `try_new` constructors emit).
+toolkit-canonical-errors = { workspace = true }
+
+# Core dependencies for API trait
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["v5"] }
+serde_json = { workspace = true }
+
+# GTS types (from git dependency)
+gts = { workspace = true }
+toolkit-gts = { workspace = true }

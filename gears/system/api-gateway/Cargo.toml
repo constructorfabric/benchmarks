@@ -1,0 +1,76 @@
+[package]
+name = "cf-gears-api-gateway"
+version = "0.4.8"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "API Gateway module"
+repository.workspace = true
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears"]
+categories = ["web-programming"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "api_gateway"
+
+[lints]
+workspace = true
+
+[dependencies]
+toolkit = { workspace = true }
+toolkit-http = { workspace = true }
+toolkit-gateway = { workspace = true }
+toolkit-security = { workspace = true }
+toolkit-transport-grpc = { workspace = true }
+toolkit-canonical-errors = { workspace = true, features = ["axum"] }
+cf-gears-system-sdks = { workspace = true, features = ["directory_grpc"] }
+authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.28", path = "../authn-resolver/authn-resolver-sdk" }
+toolkit-gts = { workspace = true }
+grpc_hub = { workspace = true }
+authn-resolver = { workspace = true }
+toolkit-macros = { workspace = true }
+inventory = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+
+dashmap = { workspace = true }
+arc-swap = { workspace = true }
+nanoid = { workspace = true }
+
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+matchit = { workspace = true }
+governor = { workspace = true }
+glob = { workspace = true }
+
+opentelemetry = { workspace = true }
+chrono = { workspace = true }
+
+utoipa = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
+bytes = { workspace = true }
+rust-embed = { workspace = true }
+
+[dev-dependencies]
+futures-core = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+
+[features]
+grpc = []
+embed_elements = []
+otel = []
+
+[build-dependencies]
+ureq = { workspace = true }

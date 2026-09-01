@@ -1,0 +1,5 @@
+error: ctor must be a Rust expression, not a string literal. Use: ctor = MyType::new()  (with parentheses), or:  ctor = Default::default()
+ --> tests/ui/fail/ctor_string_literal.rs:3:48
+  |
+3 | #[gear(name="x", capabilities=[stateful], ctor="X::new()")]
+  |                                                ^^^^^^^^^^

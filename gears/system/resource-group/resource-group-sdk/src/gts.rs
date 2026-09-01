@@ -1,0 +1,89 @@
+// Created: 2026-04-16 by Constructor Tech
+//! GTS schema definitions for the Resource Group type system.
+
+use toolkit_gts::gts_id;
+use toolkit_gts::gts_type_schema;
+
+/// GTS base type schema for Resource Group types.
+///
+/// Defines the `x-gts-traits-schema` contract: `can_be_root`,
+/// `allowed_parent_types`, `allowed_membership_types`.
+///
+/// "Is this type a tenant?" is **not** a trait — it is derived from the type
+/// code: any type whose GTS chain starts with [`TENANT_RG_TYPE_PATH`] is a
+/// tenant type.
+///
+/// All chained RG types (tenant, department, branch, etc.) inherit from this
+/// base contract via `allOf` + `$ref`.
+///
+/// # TODO: replace manual DTOs when `gts-macros` supports `x-gts-traits-schema`
+///
+/// Currently `gts-macros` (`struct_to_gts_schema`) does not generate
+/// `x-gts-traits-schema` in the output JSON Schema. Once it does, this struct
+/// should replace:
+/// - `models::ResourceGroupType` (response DTO)
+/// - `models::CreateTypeRequest` (create request DTO)
+/// - `models::UpdateTypeRequest` (update request DTO)
+///
+/// Blockers: `gts-macros` needs camelCase serde support, `x-gts-traits-schema`
+/// generation, `metadata_schema` field support, and `Clone`/`Debug`/`Default`
+/// derives.
+///
+/// # Schema ID
+///
+/// ```text
+/// gts.cf.core.rg.type.v1~
+/// ```
+#[gts_type_schema(
+    dir_path = "schemas",
+    type_id = gts_id!("cf.core.rg.type.v1~"),
+    description = "Resource Group base type — defines placement and tenant scope traits",
+    properties = "id,can_be_root,allowed_parent_types,allowed_membership_types",
+    base = true
+)]
+pub struct ResourceGroupTypeV1 {
+    /// GTS type path (schema identifier).
+    pub id: gts::GtsInstanceId,
+    /// Whether groups of this type can be root nodes (no parent). Default `false`.
+    pub can_be_root: bool,
+    /// GTS type paths of allowed parent types.
+    pub allowed_parent_types: Vec<String>,
+    /// GTS type paths of allowed membership resource types.
+    pub allowed_membership_types: Vec<String>,
+}
+
+/// Canonical GTS resource type for a resource **group** as a resource.
+///
+/// Lands in `CanonicalError::{NotFound,AlreadyExists}.ctx.resource_type`
+/// for every group-attributable error and backs the impl crate's
+/// `#[resource_error("…")]` REST marker. The macro literal there cannot
+/// reference this const (proc-macros can't resolve consts), so the
+/// round-trip tests in [`crate::error`] assert the two stay equal.
+///
+/// Match it against the resource-scoped projection variants
+/// ([`crate::ResourceGroupError::NotFound`] /
+/// [`crate::ResourceGroupError::AlreadyExists`]).
+// `rg` namespace, NOT the crate-name-derived `resource_group`: this
+// string is the PEP-evaluated resource type for every group CRUD gate,
+// and every deployed role grant is written against the documented
+// `gts.cf.core.rg.*` family (siblings: `rg.group_membership.v1~`,
+// `rg.type.v1~`). The gts-rust v0.11.0 migration mechanically swapped
+// the literal for a crate-derived id and silently renamed the type —
+// which 403'd every existing grant (tenant members could no longer
+// create groups, AM's ownership probe on tenant delete failed closed).
+pub const GROUP_RESOURCE_TYPE: &str = gts_id!("cf.core.rg.group.v1~");
+
+/// Canonical GTS resource type for a resource-group membership link.
+pub const GROUP_MEMBERSHIP_RESOURCE_TYPE: &str = gts_id!("cf.core.rg.group_membership.v1~");
+
+/// GTS type path for the tenant resource-group type.
+///
+/// Any RG type whose code **starts with** this path is considered a tenant
+/// type — creating a group of such a type starts a new tenant scope
+/// (`tenant_id = group.id`). Non-tenant types inherit `tenant_id` from their
+/// parent. There is no explicit `is_tenant` boolean on the type record; the
+/// prefix is the single source of truth.
+///
+/// The tenant RG type itself is seeded externally (via API/config) with
+/// `can_be_root: true` so root tenants are valid placements.
+pub const TENANT_RG_TYPE_PATH: &str = gts_id!("cf.core.rg.type.v1~cf.core._.tenant.v1~");

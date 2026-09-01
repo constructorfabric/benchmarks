@@ -1,0 +1,106 @@
+# Created: 2026-04-16 by Constructor Tech
+[package]
+name = "cf-gears-resource-group"
+version = "0.3.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Resource Group gear: hierarchical resource group management with GTS type system"
+repository.workspace = true
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "resource-group"]
+categories = ["web-programming"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "resource_group"
+
+[lints]
+workspace = true
+
+[features]
+default = ["odata"]
+odata = []
+
+# Gates the PostgreSQL smoke suite (tests/pg_smoke_test.rs), needs Docker:
+# it spins up a real Postgres via `testcontainers` to run the set-based
+# `INSERT ... SELECT` / derived-table `DELETE` / chunked-delete statements
+# against a backend SQLite can't tell apart from ordinary row-by-row SQL.
+# Disabled by default; enable with `--features integration`.
+integration = []
+
+[dependencies]
+# SDK - public API, models, and errors
+resource-group-sdk = { package = "cf-gears-resource-group-sdk", version = "0.2.6", path = "../resource-group-sdk", features = ["odata"] }
+
+# Core dependencies
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+inventory = { workspace = true }
+
+# Serde and JSON schema
+serde = { workspace = true }
+serde_json = { workspace = true }
+jsonschema = { workspace = true }
+utoipa = { workspace = true, features = ["time"] }
+
+# HTTP and REST
+axum = { workspace = true, features = ["macros"] }
+http = { workspace = true }
+
+# Time handling
+time = { workspace = true }
+
+# UUID support
+uuid = { workspace = true }
+
+# Database - SeaORM
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# AuthZ
+authz-resolver-sdk = { workspace = true }
+
+# GTS type system — types registry for schema resolution
+types-registry-sdk = { workspace = true }
+authz-resolver = { workspace = true }
+types-registry = { workspace = true }
+gts = { workspace = true }
+
+# Local dependencies
+toolkit = { workspace = true }
+toolkit-canonical-errors = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite", "pg"] }
+toolkit-gts = { workspace = true }
+toolkit-db-macros = { workspace = true }
+toolkit-security = { workspace = true }
+toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+toolkit-macros = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+# "test-support" enables `connect_db_with_metric_callback` and
+# `secure::in_transaction_for_testing`, which the DB-behaviour audit's
+# `QueryRecorder` needs. Test-only: the production dependency above pulls in
+# toolkit-db without it.
+# "pg" (on top of "sqlite") lets tests/pg_smoke_test.rs connect to a real
+# PostgreSQL via connect_db() when built with --features integration.
+toolkit-db = { workspace = true, features = ["sqlite", "pg", "test-support"] }
+# PostgreSQL smoke suite (tests/pg_smoke_test.rs) -- brings up a real
+# PostgreSQL via Docker. Both already workspace dependencies (root
+# Cargo.toml), used here as test-only dev-dependencies.
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
+tower = { workspace = true }
+http-body-util = { workspace = true }
+# Enable the SDK `test-util` feature so integration-test fakes can build the
+# canonical-error envelopes via `types_registry_sdk::testing`.
+types-registry-sdk = { workspace = true, features = ["test-util"] }
+# Declared directly so the integration-test fakes that name
+# `toolkit_canonical_errors::CanonicalError` don't rely on it being pulled in
+# transitively via the normal (`[dependencies]`) build graph.
+toolkit-canonical-errors = { workspace = true }

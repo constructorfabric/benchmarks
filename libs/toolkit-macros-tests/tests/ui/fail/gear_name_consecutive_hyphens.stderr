@@ -1,0 +1,5 @@
+error: gear name must not contain consecutive hyphens
+ --> tests/ui/fail/gear_name_consecutive_hyphens.rs:6:12
+  |
+6 |     name = "file--parser",  // Should fail: consecutive hyphens
+  |            ^^^^^^^^^^^^^^

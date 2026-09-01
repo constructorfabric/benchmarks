@@ -1,0 +1,5 @@
+error: await_ready must be a bool literal (true/false) or a bare flag
+ --> tests/ui/fail/lifecycle_await_ready_wrong_type.rs:3:80
+  |
+3 | #[gear(name="x", capabilities=[stateful], lifecycle(entry="serve", await_ready="true"))]
+  |                                                                                ^^^^^^

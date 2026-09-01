@@ -1,0 +1,5 @@
+# Lychee link checker configuration
+# https://lychee.cli.rs/
+
+# Only check local file links, not external URLs
+offline = true

@@ -1,0 +1,170 @@
+# cargo-deny configuration for security, licenses, bans, and sources.
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+################################################################################
+# Dependency graph construction
+################################################################################
+[graph]
+# Optionally restrict targets to check (kept commented by default).
+# targets = [
+#   "x86_64-unknown-linux-gnu",
+#   { triple = "wasm32-unknown-unknown", features = ["atomics"] },
+# ]
+# all-features = true
+# exclude-dev = true
+# exclude-unpublished = false
+
+################################################################################
+# Security advisories (RustSec)
+################################################################################
+[advisories]
+# Local clone/cache of the RustSec advisory DB
+db-path = ".cargo/advisory-db"
+# Upstream advisory DBs to use
+db-urls = ["https://github.com/RustSec/advisory-db"]
+
+# How to treat "unmaintained" advisories:
+# one of: "all" | "workspace" | "transitive" | "none"
+# (This is NOT a severity level; it scopes where the rule applies.)
+unmaintained = "workspace"
+
+# Yanked crate versions still use classic lint levels.
+# one of: "deny" | "warn" | "allow"
+yanked = "warn"
+
+# List of advisory IDs to ignore (RUSTSEC-YYYY-XXXX, etc.)
+ignore = [
+  # "RUSTSEC-0000-0000",
+  "RUSTSEC-2024-0437", # protobuf 2.28 stack overflow — transitive via pingora-core→prometheus 0.13; we never parse untrusted protobuf (prometheus metrics endpoint is unused)
+  "RUSTSEC-2023-0071", # Marvin Attack timing sidechannel in rsa 0.9 — dev-only dep of rustls-corecrypto-provider; used solely for RSA-PSS *verification* (public-key op, no private key involved) in rsa_pss_apple_salt_length_matches_rfc8017 test; no safe upgrade available; advisory itself permits "local use on a non-compromised computer"
+  # RUSTSEC-2026-0173 (proc-macro-error2 unmaintained) was removed: the crate is no
+  # longer in the dependency graph at all. Our own proc-macro crates emit diagnostics
+  # via syn::Error -> compile_error!, and sea-bae 0.2.2 dropped proc-macro-error2.
+  # It is now hard-banned under [bans].deny below so it cannot silently return.
+  "RUSTSEC-2026-0187", # lopdf <0.42 unbounded-recursion DoS on crafted PDFs — transitive via kreuzberg→cf-gears-file-parser→cf-gears-example-server (example app only, never parses untrusted PDFs). No usable fix: kreuzberg 4.9.x pins lopdf "^0.41" (<0.42) and the fix landed in 0.42.0; 5.x drops the bundled-pdfium feature we use. Remove once kreuzberg ships a release allowing lopdf >=0.42.
+  "RUSTSEC-2026-0194", # quick-xml <0.41 quadratic-runtime DoS on crafted start tags — transitive via kreuzberg (biblib/calamine/kreuzberg)→cf-gears-file-parser→cf-gears-example-server (example app only, never parses untrusted XML). No usable fix: all dependents pin quick-xml <0.41 (kreuzberg 4.9.8 pins "0.40.1") and the fix landed in 0.41.0; 5.x drops the bundled-pdfium feature we use. Remove once kreuzberg ships a release allowing quick-xml >=0.41.
+  "RUSTSEC-2026-0195", # quick-xml <0.41 unbounded namespace-declaration allocation (NsReader) memory-exhaustion DoS — same transitive path/justification as RUSTSEC-2026-0194 (kreuzberg→file-parser→example-server, example app only). No usable fix below quick-xml 0.41.0. Remove once kreuzberg allows quick-xml >=0.41.
+]
+
+# Note:
+# - Modern cargo-deny versions treat vulnerabilities as hard errors by default.
+# - If you must silence a specific vuln, add its ID to `ignore` above.
+
+################################################################################
+# License policy
+################################################################################
+[licenses]
+# Allow-list of SPDX license IDs
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "ISC",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+  "Zlib",
+  "CC0-1.0",
+  "OpenSSL",
+]
+
+# Confidence threshold (0.0..1.0) for license text detection
+confidence-threshold = 0.8
+
+# Per-crate exceptions (license(s) allowed only for a specific crate/version)
+exceptions = [
+  # kreuzberg >=4.8.0 changed from MIT to Elastic License 2.0 (EL-2.0).
+  # EL-2.0 is not on the default allow-list but is acceptable here because:
+  #   1. kreuzberg is an in-process library dependency, not a hosted service we resell.
+  #   2. CF/Gears's document parsing is incidental to the platform's core value
+  #      proposition; it is NOT a product sold primarily as a document-parsing service
+  #      competing with kreuzberg.
+  #   3. The pin `=4.9.8` prevents silent upgrades; any future version bump must be
+  #      reviewed for license changes. 4.9.8 reviewed: still Elastic-2.0, no change.
+  # Reviewer sign-off required before removing or modifying this exception.
+  { name = "kreuzberg", version = "=4.9.8", allow = ["Elastic-2.0"] },
+  # aws-lc-fips-sys vendors AWS-LC-FIPS sources carrying an OpenSSL license term
+  # as part of the upstream license expression. We do not allow OpenSSL globally,
+  # so keep this exception pinned to the reviewed crate release only.
+  { name = "aws-lc-fips-sys", version = "=0.13.14", allow = ["OpenSSL"] },
+]
+
+# Private workspace crates handling
+[licenses.private]
+# If true, ignore unpublished/private workspace crates for license checks
+ignore = false
+# Private registries considered "published" for the rule above
+registries = [
+  # "https://example.com/registry",
+]
+
+################################################################################
+# Duplicate versions / wildcards / bans
+################################################################################
+[bans]
+# Multiple versions of the same crate in the graph
+multiple-versions = "warn"
+
+# Version wildcards like "*"
+wildcards = "allow"
+
+# How to highlight in dot graphs when multiple versions are present
+# "lowest-version" | "simplest-path" | "all"
+highlight = "all"
+
+# Default lint level for `default-features` on workspace deps (requires the
+# `workspace-dependencies` feature in cargo-deny to take effect)
+workspace-default-features = "allow"
+
+# Allow-list of specific crates (use carefully)
+allow = [
+  # { name = "ansi_term", version = "=0.11.0" },
+]
+
+# Deny-list of specific crates (optionally with version ranges/wrappers)
+deny = [
+  # { name = "some-bad-crate", version = "*", wrappers = [] },
+  #
+  # proc-macro-error2 / proc-macro-error-attr2 are unmaintained (RUSTSEC-2026-0173).
+  # We removed every use of them: all six workspace proc-macro crates report
+  # diagnostics with syn::Error -> compile_error!. The crate can only come back
+  # transitively (sea-orm-macros -> sea-bae dropped it in 0.2.2), so ban it outright
+  # instead of relying on `unmaintained = "workspace"` to happen to not flag it.
+  { name = "proc-macro-error2" },
+  { name = "proc-macro-error-attr2" },
+  # The original, equally unmaintained crate these two forked from.
+  { name = "proc-macro-error" },
+  { name = "proc-macro-error-attr" },
+]
+
+# Skip specific crate versions when checking for duplicates
+skip = [
+  # { name = "ansi_term", version = "=0.11.0" },
+]
+
+# Remove a crate subtree entirely from the graph for checks (stronger than skip)
+skip-tree = [
+  # { name = "ansi_term", version = "=0.11.0", depth = 1 },
+]
+
+################################################################################
+# Allowed sources (registries and git)
+################################################################################
+[sources]
+# Non-allowed registry encountered
+unknown-registry = "warn"
+
+# Non-allowed git source encountered
+unknown-git = "warn"
+
+# Allowed crate registries (empty list => none allowed)
+# Default crates.io index:
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Allowed git repositories (empty => none)
+allow-git = []

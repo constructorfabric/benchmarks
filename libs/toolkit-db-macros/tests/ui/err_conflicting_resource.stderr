@@ -1,0 +1,5 @@
+error: secure: specify either `resource_col` or `no_resource`, not both
+ --> tests/ui/err_conflicting_resource.rs:9:5
+  |
+9 |     no_resource,
+  |     ^^^^^^^^^^^

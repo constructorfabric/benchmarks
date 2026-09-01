@@ -1,0 +1,211 @@
+[package]
+name = "cf-gears-toolkit"
+version = "0.6.24"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Core ToolKit library"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "cf-gears-toolkit"]
+categories = ["development-tools"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "toolkit"
+
+[lints]
+workspace = true
+
+# Pulled in only to trigger Cargo feature unification (rustls/hyper-rustls
+# `fips`); never referenced in code by design.
+[package.metadata.cargo-shear]
+ignored = ["rustls-fips-shim"]
+
+[features]
+# Enable the runner and the runtime integration by default.
+default = ["otel", "db"]
+coverage_nightly = []
+# FIPS-140-3: install a FIPS-validated crypto provider at bootstrap.
+#
+# - `cf-gears-rustls-fips-shim` is an empty crate whose ONLY purpose is to pull
+#   `rustls` (and `hyper-rustls`) with the `fips` feature, but **only** on
+#   targets where AWS-LC FIPS is the intended backend — i.e. NOT on macOS
+#   (Apple corecrypto) and NOT on Windows (CNG). On those targets its
+#   target-gated deps are absent, so `rustls/fips` is NOT activated →
+#   `aws-lc-fips-sys` is excluded from the build graph entirely.
+# - `cf-gears-rustls-corecrypto-provider` is the Apple corecrypto-backed provider,
+#   used on macOS+fips.
+# - `rustls-cng-crypto` is the Windows CNG-backed provider, used on
+#   Windows+fips. Listed under `[target.'cfg(target_os = "windows")']`
+#   below; `dep:rustls-cng-crypto` is a no-op on non-Windows hosts.
+fips = [
+    "dep:rustls-fips-shim",
+    "dep:rustls-corecrypto-provider",
+    # Forward the feature so `corecrypto::default_provider()` automatically
+    # becomes the TLS-1.3-only FIPS-claim variant on macOS — mirrors how
+    # rustls-cng-crypto routes `default_provider` to `fips_provider` under
+    # its own `fips` feature.
+    "rustls-corecrypto-provider/fips",
+    # Windows CNG provider — target-conditional dep (see below), so this
+    # activator is a no-op on non-Windows hosts.
+    "dep:rustls-cng-crypto",
+]
+
+# Database integration (toolkit-db, migrations, DbManager/DbHandle in contexts/runtime)
+db = ["dep:toolkit-db", "dep:sea-orm-migration"]
+
+# Concrete Kubernetes TokenReview platform-plane authenticator, auto-wired into
+# the OoP bootstrap when `oop_http.internal_auth` is configured (Profile 3).
+k8s-auth = ["bootstrap", "dep:toolkit-k8s-auth"]
+
+# Forward toolkit-contract's grpc-client feature so the `contract_support::grpc`
+# module re-export is visible to `#[grpc_contract]`-generated code in SDKs that
+# depend on `toolkit` but not on `toolkit-contract` directly (see
+# `toolkit_contract_macros::support::contract_support_path`). No such SDK exists
+# in-tree yet; the feature stays because `grpc-client` pulls tonic +
+# toolkit-transport-grpc, and a gRPC projection is the exception, not the norm.
+# The REST counterpart is deliberately NOT a feature: gears consume other gears
+# over REST as a matter of course, so `discovery` and the proxy-wiring phase are
+# unconditional and `toolkit-contract` is depended on with `rest-client` below.
+contract-grpc-client = ["toolkit-contract/grpc-client"]
+
+# OpenTelemetry support for distributed tracing
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:tracing-opentelemetry",
+    "dep:tracing-subscriber",
+    "dep:opentelemetry-otlp",
+    "dep:tonic",
+]
+
+bootstrap = [
+    "db",
+    "dep:serde-saphyr",
+    "cf-gears-system-sdks/directory_grpc",
+    "dep:tracing-appender",
+    "dep:file-rotate",
+    "dep:tracing-log",
+    "dep:tracing-subscriber",
+    "dep:chrono",
+    "dep:url",
+    "dep:dsn",
+    "dep:supports-color",
+    "dep:enable-ansi-support",
+    # OoP HTTP server: two-plane auth middleware + security primitives
+    "dep:toolkit-security",
+    "dep:toolkit-http-middleware",
+    # OoP outbound platform-plane credential (InternalAuthInterceptor + SA reader)
+    "dep:toolkit-transport-grpc",
+]
+
+[dependencies]
+# Project-local crates
+toolkit-macros = { workspace = true }
+toolkit-canonical-errors = { workspace = true, features = ["axum", "utoipa"] }
+toolkit-db = { workspace = true, optional = true }
+sea-orm-migration = { workspace = true, optional = true }
+toolkit-odata = { workspace = true }
+toolkit-sdk = { workspace = true }
+cf-gears-system-sdks = { workspace = true, features = ["directory"] }
+# `rest-client` is not optional: `discovery` and the runtime proxy-wiring phase
+# use `toolkit_contract::runtime::resolving`, which lives behind it.
+toolkit-contract = { workspace = true, features = ["rest-client"] }
+
+# OoP HTTP server (bootstrap feature): two-plane auth middleware + primitives
+toolkit-security = { workspace = true, optional = true }
+toolkit-http-middleware = { workspace = true, optional = true }
+# OoP outbound platform-plane credential attachment (bootstrap feature).
+toolkit-transport-grpc = { workspace = true, optional = true }
+# Concrete K8s TokenReview InternalAuthenticator (k8s-auth feature).
+toolkit-k8s-auth = { workspace = true, optional = true }
+
+# Core deps
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+tracing = { workspace = true }
+figment = { workspace = true }
+file-rotate = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+dsn = { workspace = true, optional = true }
+toolkit-utils = { workspace = true }
+rustls = { workspace = true }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+futures-core = { workspace = true }
+futures-util = { workspace = true }
+
+# Router/types used in contracts and runtime
+axum = { workspace = true }
+http = { workspace = true }
+
+# OpenAPI/serde
+utoipa = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-saphyr = { workspace = true, optional = true }
+
+# GTS support
+gts = { workspace = true }
+toolkit-gts = { workspace = true }
+
+# Performance / lock-free structures
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+arc-swap = { workspace = true }
+# `util` provides `ServiceExt::oneshot`, used by the OoP probe-first serve path
+# to delegate to the gear router that is swapped in after `start()`.
+tower = { workspace = true, features = ["util"] }
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+urlencoding = { workspace = true }
+
+# OpenTelemetry tracing support (optional) - full implementation
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+tracing-log = { workspace = true, optional = true }
+tracing-appender = { workspace = true, optional = true }
+supports-color = { workspace = true, optional = true }
+enable-ansi-support = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+
+# gRPC support only for otel (optional)
+tonic = { workspace = true, optional = true }
+
+# Apple corecrypto-backed rustls CryptoProvider. The crate's `lib.rs` is gated
+# on `cfg(target_os = "macos")` so on Linux/Windows it compiles to an empty
+# lib with no transitive deps — safe to list unconditionally. Activated by
+# the `fips` feature.
+rustls-corecrypto-provider = { workspace = true, optional = true }
+
+# Workspace-feature-unification shim — see crate docs. Empty lib on all
+# targets; on non-macOS its transitive deps add `rustls/fips` +
+# `hyper-rustls/fips` via Cargo feature unification.
+rustls-fips-shim = { workspace = true, optional = true }
+
+# Unix-specific dependencies for graceful process termination
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+
+# Windows CNG-backed rustls CryptoProvider. Activated by the `fips` feature.
+# Listed target-conditionally because the crate links against Windows CNG
+# (`bcrypt.dll` / `ncrypt.dll`) and is meaningless on other targets.
+[target.'cfg(target_os = "windows")'.dependencies]
+rustls-cng-crypto = { workspace = true, optional = true }
+
+[dev-dependencies]
+trybuild = { workspace = true }
+tempfile = { workspace = true }
+temp-env = { workspace = true }
+serial_test = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite"] }
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true, features = ["no-env-filter"] }

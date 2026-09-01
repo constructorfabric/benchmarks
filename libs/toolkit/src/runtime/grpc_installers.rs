@@ -1,0 +1,64 @@
+use parking_lot::Mutex;
+
+use crate::contracts::RegisterGrpcServiceFn;
+
+/// Installers for a specific gear (gear name + service installers).
+#[derive(Default)]
+pub struct GearInstallers {
+    pub gear_name: String,
+    pub installers: Vec<RegisterGrpcServiceFn>,
+}
+
+/// Grouped installers for all gears in the process.
+#[derive(Default)]
+pub struct GrpcInstallerData {
+    pub gears: Vec<GearInstallers>,
+}
+
+/// Runtime-owned store for gRPC service installers.
+///
+/// This replaces the previous global static storage with a proper
+/// runtime-scoped type that gets injected into the `grpc-hub` gear.
+pub struct GrpcInstallerStore {
+    inner: Mutex<Option<GrpcInstallerData>>,
+}
+
+impl GrpcInstallerStore {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(None),
+        }
+    }
+
+    /// Set installers once. Fails if already initialized.
+    ///
+    /// # Errors
+    /// Returns an error if installers have already been initialized.
+    pub fn set(&self, data: GrpcInstallerData) -> anyhow::Result<()> {
+        let mut guard = self.inner.lock();
+        if guard.is_some() {
+            anyhow::bail!("gRPC installers already initialized");
+        }
+        *guard = Some(data);
+        Ok(())
+    }
+
+    /// Consume and return all installers grouped by gear.
+    pub fn take(&self) -> Option<GrpcInstallerData> {
+        let mut guard = self.inner.lock();
+        guard.take()
+    }
+
+    /// Check if installers are present (optional helper).
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().is_none()
+    }
+}
+
+impl Default for GrpcInstallerStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}

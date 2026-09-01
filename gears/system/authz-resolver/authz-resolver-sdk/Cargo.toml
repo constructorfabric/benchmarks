@@ -1,0 +1,40 @@
+[package]
+name = "cf-gears-authz-resolver-sdk"
+version = "0.3.20"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "SDK for authz_resolver gear: evaluation API, constraints, PEP compiler"
+repository.workspace = true
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "authorization"]
+categories = ["authentication"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "authz_resolver_sdk"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+secrecy = { workspace = true }
+schemars = { workspace = true }
+
+# GTS types
+gts = { workspace = true }
+toolkit-gts = { workspace = true }
+
+# ToolKit dependencies
+toolkit = { workspace = true }
+toolkit-security = { workspace = true }
+tenant-resolver-sdk = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

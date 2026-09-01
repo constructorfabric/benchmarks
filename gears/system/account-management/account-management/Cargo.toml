@@ -1,0 +1,111 @@
+[package]
+name = "cf-gears-account-management"
+version = "0.6.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Account Management gear — tenant hierarchy storage floor"
+repository.workspace = true
+keywords = ["constructorfabric", "cf-gears"]
+categories = ["web-programming"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "account_management"
+
+[lints]
+workspace = true
+
+[dependencies]
+account-management-sdk = { workspace = true }
+
+toolkit = { workspace = true }
+toolkit-macros = { workspace = true }
+toolkit-security = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite", "pg"] }
+toolkit-db-macros = { workspace = true }
+toolkit-canonical-errors = { workspace = true, features = ["sea-orm"] }
+toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+# Macro-derived `ODataFilterable` for the conversion-request listing
+# surface (`domain/conversion/query.rs`). Tenant + metadata filter
+# fields live on the SDK side, but the conversion filter field set
+# is impl-only and never re-exported on the SDK, so the derive crate
+# is pulled directly into this crate.
+toolkit-odata-macros = { workspace = true }
+toolkit-utils = { workspace = true, features = ["humantime-serde"] }
+# Link-time GTS permission catalog (`src/gts/permissions.rs`): declares
+# AuthzPermissionV1 instances into the toolkit-gts inventory the
+# types-registry aggregates at boot.
+toolkit-gts = { workspace = true }
+inventory = { workspace = true }
+
+axum = { workspace = true, features = ["macros"] }
+http = { workspace = true }
+utoipa = { workspace = true, features = ["time"] }
+resource-group-sdk = { workspace = true }
+resource-group = { workspace = true }
+tenant-resolver-sdk = { workspace = true }
+tenant-resolver = { workspace = true }
+types-registry-sdk = { workspace = true }
+types-registry = { workspace = true }
+gts = { workspace = true }
+
+uuid = { workspace = true, features = ["v4", "serde"] }
+time = { workspace = true }
+
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+arc-swap = { workspace = true }
+async-trait = { workspace = true }
+fnv = { workspace = true }
+futures = { workspace = true }
+jsonschema = { workspace = true }
+parking_lot = { workspace = true }
+
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+
+bigdecimal = { workspace = true }
+
+tracing = { workspace = true }
+
+opentelemetry = { workspace = true }
+
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tokio-util = { workspace = true }
+
+anyhow = { workspace = true }
+
+authz-resolver-sdk = { workspace = true }
+authz-resolver = { workspace = true }
+
+[features]
+# Gates the Postgres-backed real-DB integration tests. Disabled by
+# default because they spin up a `testcontainers` Docker container
+# per test; enable with `--features integration` when Docker is
+# available locally or in CI.
+integration = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+types-registry-sdk = { workspace = true, features = ["test-util"] }
+# In-process `Router::oneshot` HTTP harness for the REST integration
+# suite (`tests/api_*_test.rs`). Mirrors the resource-group gear's
+# wiring.
+tower = { workspace = true }
+http-body-util = { workspace = true }
+proptest = "1.5"
+# `no-env-filter` accepts events with `target: "am.*"` (otherwise the
+# default `{crate}=trace` filter rejects custom targets, hiding the
+# very `am.retention` events the redaction tests need to inspect).
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+# Postgres bring-up for the integration suite. Pulled in
+# unconditionally because `[dev-dependencies]` cannot be made
+# `optional`, but every reference to these crates is gated behind
+# `#[cfg(feature = "integration")]` so a default `cargo test` does
+# not require Docker.
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }

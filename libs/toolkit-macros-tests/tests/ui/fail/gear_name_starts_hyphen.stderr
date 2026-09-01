@@ -1,0 +1,5 @@
+error: gear name must start with a lowercase letter, found '-'
+ --> tests/ui/fail/gear_name_starts_hyphen.rs:6:12
+  |
+6 |     name = "-parser",  // Should fail: starts with hyphen
+  |            ^^^^^^^^^

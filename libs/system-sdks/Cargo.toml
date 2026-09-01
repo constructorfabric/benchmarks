@@ -1,0 +1,28 @@
+[package]
+name = "cf-gears-system-sdks"
+version = "0.1.42"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Collection of system gears SDKs"
+readme = "README.md"
+rust-version.workspace = true
+keywords = ["constructorfabric", "cf-gears", "cf-gears-system"]
+categories = ["development-tools"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "cf_system_sdks"
+
+[lints]
+workspace = true
+
+[features]
+directory = ["dep:cf-gears-system-sdk-directory"]
+directory_grpc = ["directory", "cf-gears-system-sdk-directory?/grpc"]
+
+
+[dependencies]
+cf-gears-system-sdk-directory = { workspace = true, optional = true }
+

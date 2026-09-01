@@ -1,0 +1,17 @@
+---
+engines:
+  bandit:
+    exclude_paths:
+      - "testing/**"
+      - "**/test_*.py"
+      - "**/conftest.py"
+
+exclude_paths:
+  - "target/**"
+  - "**/__pycache__/**"
+  - "**/node_modules/**"
+  - ".venv/**"
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "testing/e2e/**"
+  - "gears/**/tests/**"

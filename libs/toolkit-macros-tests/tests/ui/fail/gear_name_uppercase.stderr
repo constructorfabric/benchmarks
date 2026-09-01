@@ -1,0 +1,5 @@
+error: gear name must start with a lowercase letter, found 'F'
+ --> tests/ui/fail/gear_name_uppercase.rs:6:12
+  |
+6 |     name = "FileParser",  // Should fail: contains uppercase letters
+  |            ^^^^^^^^^^^^

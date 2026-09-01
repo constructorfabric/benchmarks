@@ -1,0 +1,145 @@
+# cargo-deny configuration enforced **only** when building with
+# `--features fips`. Run via `make fips-policy` (or
+# `cargo deny --config deny-fips.toml check bans`).
+#
+# This file extends `deny.toml` with stricter dependency-graph rules that
+# encode our FIPS 140-3 boundary policy:
+#
+#   When `--features fips` is on, no non-FIPS-validated cryptographic
+#   primitive crate (and no alternative TLS/crypto framework outside our
+#   validated provider chain) may exist in the dependency graph.
+#
+# This is the Rust-ecosystem analogue of Go 1.25's `fips140=only` mode:
+# where Go panics at *runtime* on any call to a non-approved algorithm
+# in the stdlib, we refuse at *build time* to admit such a crate into
+# the graph.
+#
+# ## Phasing
+#
+# Ships **Phase A** only — bans crates that are NOT in the current
+# `--features fips` dep graph. Adding them is therefore a zero-pain
+# regression gate: a new dependency on these crates will be rejected
+# at build time, but no existing code breaks.
+#
+# Phase B (audit transitives currently in graph: ring, chacha20,
+# non-FIPS aws-lc-rs, md-5, sha1, sha2, aes, hkdf, hmac, blake2/3) is
+# tracked in `docs/security/fips/adrs/0005-fips-dependency-policy.md`
+# and PRD §10 TODO-7. Each entry moves to Phase A as the upstream
+# pull-through is replaced.
+
+[graph]
+# Restrict graph evaluation to `--features fips` builds.
+features = ["fips"]
+all-features = false
+no-default-features = false
+
+[advisories]
+# Inherit base advisories config — we only override `[bans]` here.
+db-path = ".cargo/advisory-db"
+db-urls = ["https://github.com/RustSec/advisory-db"]
+unmaintained = "workspace"
+
+[licenses]
+# Permissive default; licenses are checked by base `deny.toml`.
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-DFS-2016", "Unicode-3.0", "Zlib", "CC0-1.0", "MPL-2.0", "OpenSSL"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+# ============================================================================
+# PHASE A — bans that do NOT break the current `--features fips` build graph.
+# Each entry records WHY it is forbidden; an accidental future PR pulling any
+# of these will be rejected by `make fips-policy`.
+# ============================================================================
+deny = [
+  # --- Non-approved hashes that are NOT currently in graph -----------------
+  { name = "md2", reason = "MD2 is not a FIPS-approved hash function" },
+  { name = "md4", reason = "MD4 is not a FIPS-approved hash function" },
+  { name = "groestl", reason = "Groestl is not a FIPS-approved hash" },
+  { name = "ripemd", reason = "RIPEMD is not a FIPS-approved hash" },
+  { name = "tiger", reason = "Tiger is not a FIPS-approved hash" },
+  { name = "streebog", reason = "Streebog is not a FIPS-approved hash" },
+  { name = "whirlpool", reason = "Whirlpool is not a FIPS-approved hash" },
+
+  # --- Non-approved AEAD / stream / authenticator (full form) --------------
+  { name = "chacha20poly1305", reason = "ChaCha20-Poly1305 is not FIPS-approved (per FIPS 197 / SP 800-38D); use AES-GCM via the validated provider" },
+  { name = "salsa20", reason = "Salsa20 is not FIPS-approved" },
+  { name = "xsalsa20poly1305", reason = "XSalsa20-Poly1305 is not FIPS-approved" },
+  { name = "xchacha20poly1305", reason = "XChaCha20-Poly1305 is not FIPS-approved" },
+
+  # --- Non-approved EC primitives (Curve25519 family) ----------------------
+  { name = "x25519-dalek", reason = "x25519 is not a FIPS-approved KEX; use P-256/P-384 via the validated provider" },
+  { name = "curve25519-dalek", reason = "Curve25519 is not a FIPS-approved curve" },
+  { name = "ed25519-dalek", reason = "Ed25519 signatures are not FIPS-approved" },
+  { name = "ed25519", reason = "Ed25519 signatures are not FIPS-approved" },
+  { name = "ed25519-compact", reason = "Ed25519 signatures are not FIPS-approved" },
+
+  # --- TLS frameworks outside our validated provider chain -----------------
+  # Our validated chain is: rustls + aws-lc-rs/fips (Linux), rustls + Apple
+  # corecrypto (macOS), rustls + CNG (Windows). Anything else bypasses the
+  # FIPS boundary.
+  { name = "openssl", reason = "OpenSSL is not part of our validated chain; use rustls + our provider" },
+  { name = "openssl-sys", reason = "OpenSSL is not part of our validated chain" },
+  # NOTE: `openssl-probe` is intentionally NOT banned. It is a filesystem
+  # path probe for the OS-managed OpenSSL CA bundle (used by some Linux
+  # cert-store libs); it contains no cryptography itself.
+  { name = "boring", reason = "BoringSSL is Cloudflare's separate FIPS chain, not ours" },
+  { name = "boring-sys", reason = "BoringSSL is not part of our validated chain" },
+  { name = "native-tls", reason = "Routes to OpenSSL on Linux / Secure Transport on macOS -- not our validated chain" },
+  { name = "tokio-native-tls", reason = "Wraps native-tls -- see native-tls" },
+  { name = "async-native-tls", reason = "Wraps native-tls -- see native-tls" },
+
+  # --- Alternative rustls CryptoProviders outside our chain ----------------
+  { name = "rustls-symcrypt", reason = "SymCrypt is Microsoft's library but not yet CMVP-validated as of 2026; revisit when validated" },
+  { name = "rustls-mbedcrypto-provider", reason = "mbedTLS not in our validated chain" },
+  { name = "rustls-openssl", reason = "OpenSSL backend for rustls is not in our chain" },
+  { name = "rustls-rustcrypto", reason = "Pure-Rust RustCrypto backend has no CMVP validation" },
+  { name = "rustls-graviola", reason = "Graviola has no CMVP validation" },
+  { name = "rustls-wolfcrypt-provider", reason = "wolfCrypt is FIPS-validated but not in our chain; revisit only if needed" },
+  { name = "boring-rustls-provider", reason = "BoringCrypto is Cloudflare's separate chain, not ours" },
+]
+
+# ============================================================================
+# PHASE B — to be enabled once transitive cleanup permits.
+#
+# These crates are currently in the `--features fips` graph via legitimate
+# transitive paths and cannot be banned today without breaking the build.
+# Migration plan tracked in ADR 0005 + PRD TODO-7.
+#
+# Candidates to ban once their pull-through is eliminated:
+#
+#   { name = "ring",          reason = "ring is not our FIPS backend; transitive via pingora-rustls / ureq" },
+#   { name = "aws-lc-rs",     reason = "non-FIPS aws-lc-rs reaches the binary via rustls's default features; replace with rustls/fips on Linux, dropped via shim on macOS/Windows" },
+#   { name = "chacha20",      reason = "stream cipher; not FIPS-approved; transitive via rand ecosystem" },
+#   { name = "md-5",          reason = "MD5 is not FIPS-approved; transitive via TBD (likely JWT / hash-id helper)" },
+#   { name = "sha2",          reason = "pure-Rust SHA-2 bypasses validated module; no direct usage remains; transitive via sqlx-core, sqlx-postgres, lopdf, rust-embed-utils" },
+#   { name = "sha1",          reason = "SHA-1 not approved for signatures since 2013; transitive via TBD" },
+#   { name = "sha1_smol",     reason = "alias of sha1" },
+#   { name = "blake2",        reason = "BLAKE2 is not FIPS-approved" },
+#   { name = "blake3",        reason = "BLAKE3 is not FIPS-approved" },
+#   { name = "aes",           reason = "pure-Rust AES bypasses validated module" },
+#   { name = "aes-gcm",       reason = "pure-Rust AES-GCM bypasses validated module" },
+#   { name = "ctr",           reason = "pure-Rust CTR bypasses validated module" },
+#   { name = "ghash",         reason = "pure-Rust GHASH bypasses validated module" },
+#   { name = "cbc",           reason = "pure-Rust CBC bypasses validated module" },
+#   { name = "hmac",          reason = "pure-Rust HMAC bypasses validated module" },
+#   { name = "hkdf",          reason = "pure-Rust HKDF bypasses validated module" },
+#   { name = "pbkdf2",        reason = "pure-Rust PBKDF2 bypasses validated module" },
+#   { name = "rsa",           reason = "pure-Rust RSA bypasses validated module (also in dev-dep for PSS-salt regression test on macOS)" },
+#   { name = "p256",          reason = "pure-Rust P-256 bypasses validated module" },
+#   { name = "p384",          reason = "pure-Rust P-384 bypasses validated module" },
+#   { name = "k256",          reason = "secp256k1 not FIPS-approved" },
+#
+# Each unblock follows the same pattern: identify the upstream crate that
+# pulls the forbidden one, replace with an alternative that uses our provider
+# chain (or fork upstream if no alternative exists), then enable the deny
+# entry above.
+
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

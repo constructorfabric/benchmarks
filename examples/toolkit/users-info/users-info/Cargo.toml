@@ -1,0 +1,77 @@
+[package]
+name = "users-info"
+version = "0.6.1"
+publish = false
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["odata"]
+odata = []          # enable streaming API with typed queries
+integration = []    # gate integration tests
+
+[dependencies]
+# SDK - public API, models, and errors
+users-info-sdk = { path = "../users-info-sdk", features = ["odata"] }
+
+# AuthZ resolver for authorization (PEP flow)
+authz-resolver-sdk = { package = "cf-gears-authz-resolver-sdk", path = "../../../../gears/system/authz-resolver/authz-resolver-sdk" }
+authz-resolver = { workspace = true }
+
+# Core dependencies
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+inventory = { workspace = true }
+
+# Serde and JSON schema
+serde = { workspace = true }
+serde_json = { workspace = true }
+utoipa = { workspace = true, features = ["time"] }
+
+# HTTP and REST
+axum = { workspace = true, features = ["macros"] }
+tower-http = { workspace = true, features = ["timeout"] }
+futures-util = { workspace = true }
+http = { workspace = true }
+
+# Time handling
+time = { workspace = true }
+
+# URL parsing
+url = { workspace = true }
+
+# UUID support
+uuid = { workspace = true }
+
+
+# Database - SeaORM (driver features come from toolkit-db)
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Local dependencies
+toolkit = { workspace = true }
+toolkit-http = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite", "pg"] }
+toolkit-db-macros = { workspace = true }
+toolkit-security = { workspace = true }
+toolkit-canonical-errors = { workspace = true, features = ["axum", "utoipa"] }
+toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+toolkit-sdk = { workspace = true }
+toolkit-macros = { workspace = true }
+opentelemetry = { workspace = true }
+
+[dev-dependencies]
+tokio-util = { workspace = true }
+serde_json = { workspace = true }
+
+# Testing dependencies for tracing verification
+opentelemetry_sdk = { workspace = true, features = ["testing"] }

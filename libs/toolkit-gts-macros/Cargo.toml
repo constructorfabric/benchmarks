@@ -1,0 +1,30 @@
+[package]
+name = "cf-gears-toolkit-gts-macros"
+version = "0.1.3"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ToolKit GTS proc-macros (#[gts_schema] attribute + gts_instance! function-like macro)"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "cf-gears-toolkit"]
+categories = ["development-tools::procedural-macro-helpers"]
+metadata.docs.rs.all-features = true
+
+[lib]
+proc-macro = true
+name = "toolkit_gts_macros"
+
+[lints]
+workspace = true
+
+[dependencies]
+proc-macro-crate = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+# For the configured GTS_ID_PREFIX used when expanding the `gts_id!("...")`
+# marker form inside `type_id = ...` / `id: ...` / `"id": ...` args.
+gts-id = { workspace = true }
+gts = { workspace = true }

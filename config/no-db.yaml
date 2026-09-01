@@ -1,0 +1,26 @@
+# CF/Gears Example Server Configuration
+# Updated to use the new configuration structure
+
+# Core server configuration (global section)
+server:
+  home_dir: "~/.cf-gears"
+
+# Logging configuration (global section)
+logging:
+  default:
+    console_level: info
+    file: "logs/cf-gears.log"
+    file_level: warn
+    max_age_days: 28
+    max_backups: 3
+    max_size_mb: 1000
+
+# Per-gear configurations using new structure
+gears:
+  api-gateway:
+    # No database configuration needed for api-gateway
+    config:
+      bind_addr: "127.0.0.1:8087"
+      enable_docs: true
+      cors_enabled: true
+      auth_disabled: true

@@ -1,0 +1,18 @@
+//! SQLite-specific tests
+//!
+//! This gear organizes all SQLite-specific tests.
+//! All tests in this gear require the `sqlite` feature flag.
+
+#![cfg(feature = "sqlite")]
+
+mod concurrency_tests;
+mod manager;
+mod options;
+mod pooling_tests;
+mod secure_cte;
+mod secure_insert_tenant_validation;
+mod secure_select_project_all;
+mod secure_update_tenant_safety;
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod sqlite_tests;
+mod transaction;

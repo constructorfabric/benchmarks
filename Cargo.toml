@@ -1,0 +1,648 @@
+# Updated: 2026-04-16 by Constructor Tech
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Constructor Fabric"]
+repository = "https://github.com/constructorfabric/gears-rust"
+description = "CF/Gears Server Example"
+rust-version = "1.95.0"
+readme = "README.md"
+
+[profile.dev]
+# Incremental is for local dev cycles. CI workflows set CARGO_INCREMENTAL=0 in
+# their env, which overrides this (the env var wins in both directions).
+incremental = true
+debug = "line-tables-only" # line tables for backtraces without full debuginfo bloat
+
+[profile.test]
+incremental = true # same rationale as [profile.dev] above
+debug = "line-tables-only" # to minimize build sizes in gitworkflows
+
+[profile.release]
+codegen-units = 1
+panic = "unwind"
+debug = "line-tables-only"
+
+# Dependencies usually don't need debuginfo. See the Cargo guide:
+# https://doc.rust-lang.org/cargo/guide/build-performance.html#reduce-amount-of-generated-debug-information
+# When you do need it, use the `debugging` profile below.
+[profile.dev.package."*"]
+debug = false
+
+# Redundant in practice — dependencies of a test build use the dev profile, so the
+# override above already covers them. Kept for symmetry with the dev/test pair.
+[profile.test.package."*"]
+debug = false
+
+# Escape hatch: `cargo build --profile debugging` gives full debuginfo for the
+# workspace and its dependencies. Builds into target/debugging/, safe to delete.
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+[profile.debugging.package."*"]
+debug = true
+
+# Build scripts and the proc-macro copies rustc loads during macro expansion are
+# governed by build-override, not by the package overrides above.
+[profile.debugging.build-override]
+debug = true
+
+[workspace]
+members = [
+    "apps/cf-gears-example-server",
+    "tools/gts-analyze",
+    "tools/xtask",
+    "libs/toolkit",
+    "libs/toolkit-macros",
+    "libs/toolkit-macros-tests",
+    "libs/toolkit-db",
+    "libs/toolkit-db-macros",
+    "libs/toolkit-auth",
+    "libs/toolkit-canonical-errors",
+    "libs/toolkit-canonical-errors-macro",
+    "libs/toolkit-gts",
+    "libs/toolkit-gts-macros",
+    "libs/toolkit-http",
+    "libs/toolkit-http-middleware",
+    "libs/toolkit-gateway",
+    "libs/toolkit-k8s-auth",
+    "libs/toolkit-sdk",
+    "libs/toolkit-odata-macros",
+    "libs/toolkit-security",
+    "libs/toolkit-odata",
+    "libs/toolkit-node-info",
+    "libs/toolkit-stable-hash",
+    "libs/toolkit-transport-grpc",
+    "libs/toolkit-utils",
+    "libs/rustls-corecrypto-provider",
+    "libs/rustls-fips-shim",
+    "libs/toolkit-contract",
+    "libs/toolkit-contract-macros",
+    "libs/toolkit-contract-macros-tests",
+    "libs/toolkit-contract-protogen",
+    "libs/system-sdks",
+    "libs/system-sdks/sdks/directory",
+    "gears/credstore/credstore-sdk",
+    "gears/credstore/credstore",
+    "gears/credstore/plugins/static-credstore-plugin",
+    "gears/system/api-gateway",
+    "gears/system/grpc-hub",
+    "examples/oop-gears/calculator-gateway/calculator-gateway-sdk",
+    "examples/oop-gears/calculator-gateway/calculator-gateway",
+    "examples/oop-gears/calculator/calculator-sdk",
+    "examples/oop-gears/calculator/calculator",
+    "examples/cf-gears-fips-probe",
+    "gears/system/types-registry/types-registry-sdk",
+    "gears/system/types-registry/types-registry",
+    "gears/system/tenant-resolver/tenant-resolver-sdk",
+    "gears/system/tenant-resolver/tenant-resolver",
+    "gears/system/tenant-resolver/plugins/static-tr-plugin",
+    "gears/system/tenant-resolver/plugins/single-tenant-tr-plugin",
+    "gears/system/tenant-resolver/plugins/rg-tr-plugin",
+    "gears/system/authn-resolver/authn-resolver-sdk",
+    "gears/system/authn-resolver/authn-resolver",
+    "gears/system/authn-resolver/plugins/static-authn-plugin",
+    "gears/system/authn-resolver/plugins/oidc-authn-plugin",
+    "gears/system/authz-resolver/authz-resolver-sdk",
+    "gears/system/authz-resolver/authz-resolver",
+    "gears/system/authz-resolver/plugins/static-authz-plugin",
+    "gears/system/authz-resolver/plugins/tr-authz-plugin",
+    "gears/system/oagw/oagw",
+    "examples/toolkit/api-contracts/api-contracts-sdk",
+    "examples/toolkit/api-contracts/api-contracts",
+    "examples/toolkit/api-contracts/api-contracts-consumer",
+]
+exclude = ["tools/fuzz"]
+resolver = "3"
+
+[workspace.lints.rust]
+deprecated = "warn"
+non_ascii_idents = "forbid"
+unsafe_code = "forbid"
+unused_mut = "warn"
+noop_method_call = "warn"
+unused_import_braces = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
+
+[workspace.lints.clippy]
+# See clippy rules details https://rust-lang.github.io/rust-clippy/master/index.html
+# Here will be workspace global rules
+pedantic = { level = "deny", priority = -1 }
+async_yields_async = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+clone_on_copy = "deny"
+cognitive_complexity = "deny"
+dbg_macro = "deny"
+debug_assert_with_mut_call = "deny"
+default_trait_access = "deny"
+doc_link_with_quotes = "deny"
+doc_markdown = "deny"
+elidable_lifetime_names = "deny"
+empty_line_after_outer_attr = "deny"
+empty_structs_with_brackets = "deny"
+enum_glob_use = "deny"
+expect_used = "deny"
+explicit_iter_loop = "deny"
+float_cmp = "deny"
+float_cmp_const = "deny"
+format_push_string = "deny"
+if_not_else = "deny"
+ignore_without_reason = "deny"
+ignored_unit_patterns = "deny"
+implicit_clone = "deny"
+items_after_statements = "deny"
+implicit_hasher = "deny"
+inefficient_to_string = "deny"
+integer_division = "deny"
+ip_constant = "deny"
+let_underscore_must_use = "deny"
+lossy_float_literal = "deny"
+manual_assert = "deny"
+manual_let_else = "deny"
+manual_string_new = "deny"
+many_single_char_names = "deny"
+map_clone = "deny"
+map_unwrap_or = "deny"
+match_same_arms = "deny"
+match_wildcard_for_single_variants = "deny"
+missing_errors_doc = "deny"
+missing_fields_in_debug = "deny"
+missing_panics_doc = "deny"
+must_use_candidate = "deny"
+mutex_atomic = "deny"
+needless_borrow = "deny"
+needless_lifetimes = "deny"
+needless_pass_by_value = "deny"
+no_effect_underscore_binding = "deny"
+non_ascii_literal = "deny"
+non_std_lazy_statics = "deny"
+option_as_ref_cloned = "deny"
+redundant_closure_for_method_calls = "deny"
+redundant_else = "deny"
+ref_option = "deny"
+regex_creation_in_loops = "deny"
+return_self_not_must_use = "deny"
+semicolon_if_nothing_returned = "deny"
+single_char_pattern = "deny"
+similar_names = "deny"
+single_match_else = "deny"
+struct_excessive_bools = "deny"
+suspicious_operation_groupings = "deny"
+too_many_lines = "deny"
+trivially_copy_pass_by_ref = "deny"
+type_complexity = "deny"
+unchecked_time_subtraction = "deny"
+unnecessary_debug_formatting = "deny"
+uninlined_format_args = "deny"
+unnecessary_literal_bound = "deny"
+unnecessary_wraps = "deny"
+unnested_or_patterns = "deny"
+unreadable_literal = "deny"
+unused_async = "deny"
+unused_self = "deny"
+unwrap_used = "deny"
+use_debug = "deny"
+used_underscore_binding = "deny"
+used_underscore_items = "deny"
+useless_let_if_seq = "deny"
+wildcard_dependencies = "deny"
+wildcard_imports = "deny"
+
+# Additional lints for LLM-generated code quality
+# Catches redundant/inefficient patterns
+redundant_clone = "deny"
+redundant_pattern_matching = "deny"
+redundant_pub_crate = "deny"
+str_to_string = "deny"
+manual_ok_or = "deny"
+manual_map = "deny"
+manual_filter_map = "deny"
+manual_find_map = "deny"
+
+# Prevents verbose/non-idiomatic code
+match_bool = "deny"
+needless_for_each = "deny"
+needless_collect = "deny"
+needless_late_init = "deny"
+needless_option_as_deref = "deny"
+
+# Memory efficiency and correctness
+large_stack_arrays = "deny"
+large_types_passed_by_value = "deny"
+rc_buffer = "deny"
+rc_mutex = "deny"
+string_lit_as_bytes = "deny"
+verbose_file_reads = "deny"
+
+[workspace.dependencies]
+# libs
+toolkit = { package = "cf-gears-toolkit", version = "0.6.24", path = "libs/toolkit" }
+toolkit-http = { package = "cf-gears-toolkit-http", version = "0.6.12", path = "libs/toolkit-http" }
+toolkit-http-middleware = { package = "cf-gears-toolkit-http-middleware", version = "0.2.2", path = "libs/toolkit-http-middleware" }
+toolkit-gateway = { package = "cf-gears-toolkit-gateway", version = "0.2.1", path = "libs/toolkit-gateway" }
+toolkit-k8s-auth = { package = "cf-gears-toolkit-k8s-auth", version = "0.1.1", path = "libs/toolkit-k8s-auth" }
+toolkit-auth = { package = "cf-gears-toolkit-auth", version = "0.7.5", path = "libs/toolkit-auth" }
+toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "0.9.1", path = "libs/toolkit-canonical-errors" }
+toolkit-canonical-errors-macro = { package = "cf-gears-toolkit-canonical-errors-macro", version = "0.6.2", path = "libs/toolkit-canonical-errors-macro" }
+toolkit-db = { package = "cf-gears-toolkit-db", version = "0.12.0", path = "libs/toolkit-db" }
+toolkit-db-macros = { package = "cf-gears-toolkit-db-macros", version = "0.6.4", path = "libs/toolkit-db-macros" }
+toolkit-gts = { package = "cf-gears-toolkit-gts", version = "0.1.4", path = "libs/toolkit-gts" }
+toolkit-gts-macros = { package = "cf-gears-toolkit-gts-macros", version = "0.1.3", path = "libs/toolkit-gts-macros" }
+toolkit-macros = { package = "cf-gears-toolkit-macros", version = "0.6.5", path = "libs/toolkit-macros" }
+toolkit-node-info = { package = "cf-gears-toolkit-node-info", version = "0.6.5", path = "libs/toolkit-node-info" }
+toolkit-odata = { package = "cf-gears-toolkit-odata", version = "0.9.3", path = "libs/toolkit-odata" }
+toolkit-odata-macros = { package = "cf-gears-toolkit-odata-macros", version = "0.6.12", path = "libs/toolkit-odata-macros" }
+toolkit-sdk = { package = "cf-gears-toolkit-sdk", version = "0.7.6", path = "libs/toolkit-sdk" }
+toolkit-security = { package = "cf-gears-toolkit-security", version = "0.8.0", path = "libs/toolkit-security" }
+toolkit-stable-hash = { package = "cf-gears-toolkit-stable-hash", version = "0.1.0", path = "libs/toolkit-stable-hash" }
+toolkit-transport-grpc = { package = "cf-gears-toolkit-transport-grpc", version = "0.7.2", path = "libs/toolkit-transport-grpc" }
+toolkit-utils = { package = "cf-gears-toolkit-utils", version = "0.6.4", path = "libs/toolkit-utils" }
+rustls-corecrypto-provider = { package = "cf-gears-rustls-corecrypto-provider", version = "0.1.1", path = "libs/rustls-corecrypto-provider" }
+rustls-fips-shim = { package = "cf-gears-rustls-fips-shim", version = "0.1.2", path = "libs/rustls-fips-shim" }
+# Windows CNG-backed rustls CryptoProvider (Windows-only FIPS path). Caret-pinned to 0.1.x;
+# re-evaluate per release. See docs/security/fips/adrs/0003-windows-fips-via-rustls-cng-crypto.md.
+rustls-cng-crypto = { version = "0.1", default-features = false, features = ["fips"] }
+
+# PKCS#8 + SEC1 envelope parsing used by the macOS corecrypto provider's
+# server-side signer (cf-gears-rustls-corecrypto-provider). These crates do
+# *structural DER parsing only* — no cryptographic primitives, no scalar
+# arithmetic. EC public points are extracted from the embedded `publicKey`
+# field of SEC1 (rather than derived from the scalar in non-FIPS code),
+# preserving the FIPS-validated boundary at corecrypto for every
+# cryptographic operation. See ADR 0004.
+pkcs8 = "0.10"
+sec1 = { version = "0.7", default-features = false, features = ["alloc", "der"] }
+
+toolkit-contract = { package = "cf-gears-toolkit-contract", version = "0.1.3", path = "libs/toolkit-contract" }
+toolkit-contract-macros = { package = "cf-gears-toolkit-contract-macros", version = "0.1.1", path = "libs/toolkit-contract-macros" }
+toolkit-contract-protogen = { package = "cf-gears-toolkit-contract-protogen", version = "0.1.2", path = "libs/toolkit-contract-protogen" }
+
+cf-gears-system-sdks = { version = "0.1.42", path = "libs/system-sdks" }
+cf-gears-system-sdk-directory = { version = "0.1.42", path = "libs/system-sdks/sdks/directory" }
+
+# System gears
+types-registry = { package = "cf-gears-types-registry", version = "0.1.34", path = "gears/system/types-registry/types-registry" }
+authn-resolver = { package = "cf-gears-authn-resolver", version = "0.2.28", path = "gears/system/authn-resolver/authn-resolver" }
+authz-resolver = { package = "cf-gears-authz-resolver", version = "0.1.36", path = "gears/system/authz-resolver/authz-resolver" }
+tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.1.32", path = "gears/system/tenant-resolver/tenant-resolver" }
+resource-group = { package = "cf-gears-resource-group", version = "0.3.0", path = "gears/system/resource-group/resource-group" }
+credstore = { package = "cf-gears-credstore", version = "0.3.0", path = "gears/credstore/credstore" }
+oagw = { package = "cf-gears-oagw", version = "0.4.0", path = "gears/system/oagw/oagw" }
+account-management = { package = "cf-gears-account-management", version = "0.6.0", path = "gears/system/account-management/account-management" }
+usage-collector = { package = "cf-gears-usage-collector", version = "0.2.9", path = "gears/system/usage-collector/usage-collector" }
+cluster = { package = "cf-gears-cluster", version = "0.2.1", path = "gears/system/cluster/cluster" }
+
+cf-gears-cluster-sdk = { version = "0.2.1", path = "gears/system/cluster/cluster-sdk" }
+cf-gears-cluster-conformance = { version = "0.3.1", path = "gears/system/cluster/cluster-conformance" }
+
+# System gears SDKs
+account-management-sdk = { package = "cf-gears-account-management-sdk", version = "0.5.6", path = "gears/system/account-management/account-management-sdk" }
+cluster-sdk = { package = "cf-gears-cluster-sdk", version = "0.2.1", path = "gears/system/cluster/cluster-sdk" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.5", path = "gears/system/types-registry/types-registry-sdk" }
+tenant-resolver-sdk = { package = "cf-gears-tenant-resolver-sdk", version = "0.3.20", path = "gears/system/tenant-resolver/tenant-resolver-sdk" }
+authz-resolver-sdk = { package = "cf-gears-authz-resolver-sdk", version = "0.3.20", path = "gears/system/authz-resolver/authz-resolver-sdk" }
+resource-group-sdk = { package = "cf-gears-resource-group-sdk", version = "0.2.6", path = "gears/system/resource-group/resource-group-sdk" }
+usage-collector-sdk = { package = "cf-gears-usage-collector-sdk", version = "0.3.7", path = "gears/system/usage-collector/usage-collector-sdk" }
+
+# BSS gears (ported from vhp-core)
+# FIPS-validated SHA-256 for the ledger idempotency payload fingerprint.
+aws-lc-rs = "1.17"
+
+# credstore
+credstore-sdk = { package = "cf-gears-credstore-sdk", version = "0.2.8", path = "gears/credstore/credstore-sdk" }
+
+# mini-chat
+mini-chat-sdk = { package = "cf-gears-mini-chat-sdk", version = "0.10.18", path = "gears/mini-chat/mini-chat-sdk" }
+
+# api-contracts (example: toolkit-contract macros showcased on a Payment API)
+api-contracts-sdk = { package = "cf-api-contracts-sdk", version = "0.1.0", path = "examples/toolkit/api-contracts/api-contracts-sdk" }
+
+# System gears
+grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.18", path = "gears/system/grpc-hub" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+serde-saphyr = "0.0.22"
+secrecy = { version = "0.10", features = ["serde"] }
+serde_urlencoded = "0.7"
+# Query-string codec shared by the generated REST client and its server
+# extractor. Unlike `serde_urlencoded` it round-trips repeated keys into a
+# sequence, which is what makes `Vec<T>` query fields work end to end.
+serde_html_form = "0.4"
+schemars = { version = "1.2", features = ["derive", "uuid1"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Async runtime
+tokio = { version = "1.47", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = { version = "0.1", features = ["sync", "net"] }
+# Default features include the `rand`-backed `strategy::jitter` helper used by
+# the gRPC retry schedules.
+tokio-retry = "0.3"
+futures = "0.3"
+async-trait = "0.1"
+async-stream = { version = "0.3" }
+
+# High-performance data structures
+dashmap = "6.1"
+arc-swap = "1.7"
+
+# Security
+zeroize = { version = "1", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "json",
+    "time",
+    "local-time",
+] }
+tracing-log = "0.2"
+tracing-opentelemetry = "0.33"
+tracing-appender = "0.2"
+tracing-test = "0.2"
+opentelemetry = { version = "0.32", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.32", features = ["trace", "rt-tokio", "metrics"] }
+opentelemetry-otlp = { version = "0.32", features = [
+    "grpc-tonic",
+    "http-proto",
+] }
+
+# Web framework (only for api-gateway)
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = [
+    "trace",
+    "request-id",
+    "cors",
+    "limit",
+    "util",
+    "timeout",
+    "decompression-gzip",
+    "decompression-br",
+    "decompression-deflate",
+    "follow-redirect",
+    "catch-panic",
+] }
+uuid = { version = "1.23.3", features = ["serde", "v5"] }
+governor = "0.10"
+
+# OpenAPI documentation (only for api-gateway)
+utoipa = { version = "5.5", features = [
+    "macros",
+    "openapi_extensions",
+    "chrono",
+    "uuid",
+] }
+
+# HTTP stack dependencies
+hyper = "1.10.1"
+hyper-util = "0.1"
+hyper-rustls = { version = "0.27", default-features = false, features = [
+    "aws-lc-rs",
+    "http1",
+    "http2",
+    "tls12",
+    "native-tokio",
+    "webpki-tokio",
+] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-native-certs = "0.8"
+rustls-pki-types = "1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs"] }
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+http-body-util = "0.1"
+http-body = "1"
+
+# HTTP client (default-tls = rustls + aws-lc-rs in 0.13)
+reqwest = { version = "0.13", features = ["stream"] }
+rand = "0.10"
+
+# sign-only request builder; requests are executed via the existing reqwest client.
+rusty-s3 = { version = "0.10", default-features = false }
+# XML response/error parsing for the S3 backend (ADR-0005). Pinned >= 0.41.0: RUSTSEC-2026-0194 and
+# RUSTSEC-2026-0195 (DoS) are fixed only as of this release.
+quick-xml = "0.41"
+
+# Synchronous locks for better performance
+parking_lot = "0.12"
+
+# Property / model-based testing (cluster conformance suite reference model)
+proptest = "1"
+
+# CLI support
+clap = { version = "4.5", features = ["derive"] }
+
+# Database utilities
+#
+# TLS note: sea-orm and sea-orm-migration use runtime-tokio (NOT runtime-tokio-rustls).
+# runtime-tokio-rustls would transitively activate sqlx/tls-rustls-ring, enabling
+# the `ring` crypto provider on rustls IN ADDITION to our aws-lc-rs.  With both
+# providers active, rustls 0.23 can no longer auto-detect and panics at runtime
+# in any code that calls ServerConfig::builder() without a prior
+# CryptoProvider::install_default() (e.g. tests).
+# TLS is provided separately via sqlx/tls-rustls-aws-lc-rs below.
+#
+# Since sqlx 0.9 the combined runtime+TLS features (runtime-tokio-rustls, ...) are
+# gone upstream, so the split below is the only form available -- which is exactly
+# what we already wanted.
+#
+# `sqlite-use-returning-for-3_35` is part of sea-orm 2.0's default feature set; we
+# set default-features = false, so it has to be listed explicitly.
+# NOT enabled on purpose:
+#   - `stream`: nothing in the workspace uses ConnectionTrait::stream/StreamTrait.
+#   - `postgres-use-serial-pk`: we never generate DDL from entities (no Schema::new /
+#     create_table_from_entity), so 2.0's serial -> GENERATED BY DEFAULT AS IDENTITY
+#     change cannot affect our schemas; all serial/identity columns are hand-written SQL.
+sea-orm = { version = "2.0", default-features = false, features = [
+    "runtime-tokio",
+    "with-uuid",
+    "with-chrono",
+    "with-time",
+    "with-json",
+    "with-rust_decimal",
+    "macros",
+    "sqlite-use-returning-for-3_35",
+] }
+sea-orm-migration = { version = "2.0", default-features = false, features = [
+    "runtime-tokio",
+] }
+# sqlx: TLS via aws-lc-rs; runtime-tokio for async.  This is the sole TLS entry
+# point for the DB stack -- sea-orm/sea-orm-migration intentionally use runtime-tokio
+# (not runtime-tokio-rustls) to avoid pulling in ring.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-aws-lc-rs"] }
+
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# File rotation for logging
+file-rotate = "0.8"
+
+# Time handling
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+
+# Kubernetes client (optional, for k8s feature gate)
+kube = { version = "3.0", default-features = false }
+k8s-openapi = { version = "0.27", default-features = false }
+
+# DSN parsing
+dsn = "1.1.1"
+humantime = "2.3.0"
+
+# URL parsing
+url = "2.5"
+urlencoding = "2.1"
+
+# Regex for env expansion
+regex = "1.10"
+
+# CLI and terminal output
+glob = "0.3"
+supports-color = "3"
+enable-ansi-support = "0.3"
+
+# gRPC support
+tonic = { version = "0.14", features = ["transport"] }
+prost = { version = "0.14" }
+tonic-prost = "0.14"
+
+# Protocol buffer compilation (build dependencies)
+tonic-prost-build = "0.14"
+
+# Blocking HTTP client (for build scripts)
+ureq = "3.3"
+
+# Time handling
+time = { version = "0.3.47", features = ["serde", "formatting", "parsing"] }
+
+# Cryptographic utilities
+sha2 = "0.10"
+hex = "0.4"
+
+# JWT and authentication
+jsonwebtoken = { version = "10.3", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+
+# Configuration management
+figment = { version = "0.10", features = ["yaml", "env"] }
+inventory = "0.3"
+
+# File system utilities
+tempfile = "3"
+dirs = "6"
+
+# Decimal handling
+bigdecimal = "0.4"
+rust_decimal = { version = "1.39", features = ["serde"] }
+ryu = "1.0"
+
+# System information
+sysinfo = "0.38"
+hostname = "0.4"
+starship-battery = "0.11"
+local-ip-address = "0.6"
+machine-uid = "0.5"
+nvml-wrapper = "0.12"
+
+# Public Suffix List
+psl = "2"
+
+# Image processing (thumbnail generation)
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+
+# Text processing
+base64 = "0.22"
+postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
+strsim = "0.11"
+
+# OData parsing
+peg = "0.8"
+chrono-tz = "0.10"
+
+# Procedural macros
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = [
+    "full",
+    "parsing",
+    "printing",
+    "derive",
+    "extra-traits",
+] }
+heck = "0.5"
+proc-macro-crate = "3"
+
+# Testing utilities
+trybuild = "1"
+serial_test = { version = "3", features = ["file_locks"] }
+criterion = { version = "0.8", default-features = false }
+testcontainers = { version = "0.27", default-features = false, features = ["aws-lc-rs"] }
+testcontainers-modules = { version = "0.15", default-features = false, features = ["aws-lc-rs", "postgres", "mysql"] }
+httpmock = "0.8"
+flate2 = "1"
+
+# Async utilities
+futures-core = "0.3"
+futures-util = "0.3"
+pin-project-lite = "0.2"
+
+# HTTP types and web utilities
+http = "1.3"
+httpdate = "1"
+matchit = "0.9"
+
+# Document and file handling
+rust-embed = "8"
+bytes = "1.11"
+mime = "0.3"
+
+# Document parsing libraries
+docx-rust = "0.1.11"
+# `bundled-pdfium` downloads a prebuilt libpdfium at build time rather than vendoring one;
+# Cargo.lock does not pin it. The version lives in .cargo/config.toml as PDFIUM_VERSION.
+kreuzberg = { version = "=4.9.8", features = ["html", "excel", "office", "pdf", "bundled-pdfium"] }
+
+# Additional testing utilities
+tokio-test = "0.4"
+mockall = "0.13"
+temp-env = { version = "0.3", features = ["async_closure"] }
+
+# Additional utilities
+nanoid = "0.4"
+fnv = "1.0"
+
+# GTS dependencies
+jsonschema = { version = "0.40", default-features = false }
+walkdir = "2.5"
+
+# GTS library.
+# Keep in sync with tools/dylint_lints/Cargo.toml.
+gts-id = "0.11.0"
+gts = "0.11.0"
+gts-macros = "0.11.0"
+
+[workspace.metadata.cargo-shear]
+ignored-paths = ["**/tests/ui/**", "**/tests/trybuild/**"]
+# Gear crate deps only consumed by macro-generated re-exports in #[toolkit::gear(deps = [...])].
+# cargo-shear cannot trace usage through proc-macro expansion, so these appear unused.
+ignored = [
+    "account-management",
+    "authn-resolver",
+    "authz-resolver",
+    "credstore",
+    "grpc_hub",
+    "oagw",
+    "resource-group",
+    "tenant-resolver",
+    "types-registry",
+]

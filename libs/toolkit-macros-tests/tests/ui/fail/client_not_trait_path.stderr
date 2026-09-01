@@ -1,0 +1,5 @@
+error: client must be a trait path, e.g. client = crate::api::MyClient
+ --> tests/ui/fail/client_not_trait_path.rs:3:50
+  |
+3 | #[gear(name="x", capabilities=[stateful], client=123)]
+  |                                                  ^^^

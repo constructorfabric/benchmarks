@@ -1,0 +1,57 @@
+# Configuration for cargo-gears architecture lints.
+# Lints are run via `cargo gears lint --dylint` (see Gears.toml).
+# See https://github.com/constructorfabric/cargo-gears for documentation.
+
+[cargo-gears-lints]
+
+# DE0708: Non-FIPS hasher allow-list.
+# Paths where direct sha2/sha1/md5 imports are permitted (substring-matched).
+hasher_allowed_paths = [
+    "gears/file-storage/file-storage/src/infra/content/hash.rs",
+]
+
+# DE1101: Tests must be in separate files.
+# Maximum number of inline test lines allowed before the lint enforces splitting
+# into a separate `*_tests.rs` file. Set to 0 to always require separation.
+# Default: 100
+max_inline_test_lines = 100
+
+# Remove entries as gears/libs are migrated to separate test files.
+excluded_paths = [
+    # libs/
+    "libs/toolkit",
+    "libs/toolkit-auth",
+    "libs/toolkit-canonical-errors",
+    "libs/toolkit-canonical-errors-macro",
+    "libs/toolkit-db",
+    "libs/toolkit-db-macros",
+    "libs/toolkit-http",
+    "libs/toolkit-macros",
+    "libs/toolkit-macros-tests",
+    "libs/toolkit-node-info",
+    "libs/toolkit-odata",
+    "libs/toolkit-odata-macros",
+    "libs/toolkit-sdk",
+    "libs/toolkit-security",
+    "libs/toolkit-transport-grpc",
+    "libs/toolkit-utils",
+    "libs/system-sdks",
+
+    # gears/
+    "gears/approval-service",
+    "gears/file-parser",
+    "gears/llm-gateway",
+    "gears/mini-chat",
+    "gears/model-registry",
+    "gears/serverless-runtime",
+    "gears/simple-resource-registry",
+    "gears/simple-user-settings",
+
+    # gears/system/
+    "gears/system/api-gateway",
+    "gears/system/grpc-hub",
+    "gears/system/gear-orchestrator",
+    "gears/system/nodes-registry",
+    "gears/system/types-registry",
+    "gears/system/usage-collector",
+]

@@ -1,0 +1,36 @@
+[package]
+name = "cf-gears-toolkit-odata"
+version = "0.9.3"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ToolKit OData library"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "cf-gears-toolkit"]
+categories = ["web-programming"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "toolkit_odata"
+
+[lints]
+workspace = true
+
+[features]
+with-utoipa = ["dep:utoipa"]
+
+[dependencies]
+toolkit-canonical-errors = { workspace = true }
+toolkit-gts = { workspace = true }
+bigdecimal = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true, default-features = false, features = ["clock"] }
+peg = { workspace = true }
+chrono-tz = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }
+utoipa = { workspace = true, optional = true }

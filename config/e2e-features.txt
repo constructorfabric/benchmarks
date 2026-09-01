@@ -1,0 +1,1 @@
+oagw,credstore,static-tenants,single-tenant,static-authn,static-authz,tr-authz,tenant-resolver-rg,static-credstore,static-idp,account-management

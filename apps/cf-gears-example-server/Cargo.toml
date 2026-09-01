@@ -1,0 +1,75 @@
+# Updated: 2026-04-16 by Constructor Tech
+[package]
+name = "cf-gears-example-server"
+version = "0.6.1"
+publish = false
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+grpc-hub = ["dep:grpc_hub"]
+oagw = ["dep:api_egress"]
+credstore = ["dep:credstore"]
+# FIPS-140-3: use the AWS-LC FIPS-validated crypto module for all cryptographic operations
+fips = ["toolkit/fips", "oagw", "api_egress?/fips"]
+single-tenant = ["dep:single-tenant-tr-plugin"]
+static-tenants = ["dep:static-tr-plugin"]
+static-authn = ["dep:static-authn-plugin"]
+static-authz = ["dep:static-authz-plugin"]
+tr-authz = ["dep:tr-authz-plugin"]
+tenant-resolver-rg = ["dep:rg-tr-plugin"]
+static-credstore = ["credstore", "dep:static-credstore-plugin"]
+otel = ["toolkit/otel"]
+account-management = ["dep:account_management", "dep:static-idp-plugin"]
+static-idp = ["dep:static-idp-plugin"]
+
+[dependencies]
+mimalloc = { version = "0.1" }
+# Local crates
+toolkit = { workspace = true, features = ["bootstrap"] }
+
+# System gears
+api_gateway = { package = "cf-gears-api-gateway", path = "../../gears/system/api-gateway" }
+api_egress = { package = "cf-gears-oagw", path = "../../gears/system/oagw/oagw", optional = true }
+grpc_hub = { package = "cf-gears-grpc-hub", path = "../../gears/system/grpc-hub", optional = true }
+types_registry = { package = "cf-gears-types-registry", path = "../../gears/system/types-registry/types-registry" }
+tenant-resolver = { package = "cf-gears-tenant-resolver", path = "../../gears/system/tenant-resolver/tenant-resolver" }
+authn-resolver = { package = "cf-gears-authn-resolver", path = "../../gears/system/authn-resolver/authn-resolver" }
+authz-resolver = { package = "cf-gears-authz-resolver", path = "../../gears/system/authz-resolver/authz-resolver" }
+
+# Optional tenant resolver plugins
+single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", path = "../../gears/system/tenant-resolver/plugins/single-tenant-tr-plugin", optional = true }
+static-tr-plugin = { package = "cf-gears-static-tr-plugin", path = "../../gears/system/tenant-resolver/plugins/static-tr-plugin", optional = true }
+rg-tr-plugin = { package = "cf-gears-rg-tr-plugin", path = "../../gears/system/tenant-resolver/plugins/rg-tr-plugin", optional = true }
+
+# Optional authn/authz plugins
+static-authn-plugin = { package = "cf-gears-static-authn-plugin", path = "../../gears/system/authn-resolver/plugins/static-authn-plugin", optional = true }
+static-authz-plugin = { package = "cf-gears-static-authz-plugin", path = "../../gears/system/authz-resolver/plugins/static-authz-plugin", optional = true }
+tr-authz-plugin = { package = "cf-gears-tr-authz-plugin", path = "../../gears/system/authz-resolver/plugins/tr-authz-plugin", optional = true }
+
+# Optional credstore plugins
+static-credstore-plugin = { package = "cf-gears-static-credstore-plugin", path = "../../gears/credstore/plugins/static-credstore-plugin", optional = true }
+
+resource_group = { package = "cf-gears-resource-group", path = "../../gears/system/resource-group/resource-group", optional = true }
+
+# user modules
+credstore = { package = "cf-gears-credstore", path = "../../gears/credstore/credstore", optional = true }
+
+anyhow = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+
+# Optional Account Management gear
+account_management = { package = "cf-gears-account-management", path = "../../gears/system/account-management/account-management", optional = true }
+static-idp-plugin = { package = "cf-gears-static-idp-plugin", path = "../../gears/system/account-management/plugins/static-idp-plugin", optional = true }
+
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde-saphyr = { workspace = true }
+serde_json = { workspace = true }

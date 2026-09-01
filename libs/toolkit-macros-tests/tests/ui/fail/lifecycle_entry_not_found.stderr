@@ -1,0 +1,24 @@
+error[E0277]: the trait bound `X: Default` is not satisfied
+ --> tests/ui/fail/lifecycle_entry_not_found.rs:6:12
+  |
+6 | pub struct X;
+  |            ^ the trait `Default` is not implemented for `X`
+  |
+help: consider annotating `X` with `#[derive(Default)]`
+  |
+6 + #[derive(Default)]
+7 | pub struct X;
+  |
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+  --> tests/ui/fail/lifecycle_entry_not_found.rs:5:1
+   |
+ 5 | #[gear(name="x", capabilities=[stateful], lifecycle(entry="serve", await_ready))]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unexpected argument #2 of type `ReadySignal`
+   |
+note: method defined here
+  --> tests/ui/fail/lifecycle_entry_not_found.rs:10:14
+   |
+10 |     async fn serve(&self, _cancel: CancellationToken) -> Result<()> { Ok(()) }
+   |              ^^^^^
+   = note: this error originates in the attribute macro `gear` (in Nightly builds, run with -Z macro-backtrace for more info)

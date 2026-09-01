@@ -1,0 +1,48 @@
+[package]
+name = "cf-gears-system-sdk-directory"
+version = "0.1.42"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Directory service SDK module"
+readme = "README.md"
+rust-version.workspace = true
+keywords = ["constructorfabric", "cf-gears", "cf-gears-system"]
+categories = ["web-programming"]
+build = "build.rs"
+include = ["proto/", "src/", "build.rs", "Cargo.toml"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "cf_system_sdk_directory"
+
+[lints]
+workspace = true
+
+[features]
+grpc = [
+    "dep:toolkit-transport-grpc",
+    "dep:tonic",
+    "dep:tonic-prost",
+    "dep:prost",
+    "dep:tracing",
+    "dep:tonic-prost-build",
+]
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+
+
+toolkit-transport-grpc = { workspace = true, optional = true }
+tonic = { workspace = true, features = ["transport"], optional = true }
+tonic-prost = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[build-dependencies]
+tonic-prost-build = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

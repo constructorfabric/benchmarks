@@ -1,0 +1,37 @@
+[package]
+name = "cf-gears-toolkit-odata-macros"
+version = "0.6.12"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Proc-macro derives for OData protocol (FilterField, Schema, etc)"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "cf-gears-toolkit"]
+categories = ["development-tools::procedural-macro-helpers"]
+metadata.docs.rs.all-features = true
+
+[lib]
+proc-macro = true
+name = "toolkit_odata_macros"
+
+[lints]
+workspace = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+heck = { workspace = true }
+
+[dev-dependencies]
+trybuild = { workspace = true }
+# Dev-only cycle (Cargo permits dev-dependency cycles): `toolkit-odata` regular-depends
+# on this crate, and this crate's trybuild/UI tests expand the derives against it.
+# Path-only, no version on purpose — not `workspace = true`, which would carry one:
+# cargo drops a path-only dev-dependency from the published manifest. With a version,
+# publishing this crate demands that exact `toolkit-odata` release from crates.io, and it
+# is published *after* us (it depends on this crate), so the release fails.
+toolkit-odata = { package = "cf-gears-toolkit-odata", path = "../toolkit-odata" }
+uuid = { workspace = true, features = ["v7"] }

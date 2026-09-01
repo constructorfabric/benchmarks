@@ -1,0 +1,5 @@
+error: capabilities must be an array, e.g. capabilities = [db, rest]
+ --> tests/ui/fail/caps_not_array.rs:3:31
+  |
+3 | #[gear(name="x", capabilities="rest")]
+  |                               ^^^^^^

@@ -1,0 +1,34 @@
+[package]
+name = "cf-gears-tenant-resolver-sdk"
+version = "0.3.20"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "SDK for tenant-resolver gear: API traits, models, and error definitions"
+repository.workspace = true
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears"]
+categories = ["web-programming"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "tenant_resolver_sdk"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+
+# GTS types
+gts = { workspace = true }
+toolkit-gts = { workspace = true }
+
+# ToolKit dependencies
+toolkit = { workspace = true }
+toolkit-security = { workspace = true }

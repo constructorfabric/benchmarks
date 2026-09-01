@@ -1,0 +1,82 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use toolkit_db::secure::DBRunner;
+use toolkit_odata::{CursorV1, ODataQuery};
+use uuid::Uuid;
+
+use crate::domain::service::ServiceConfig;
+use crate::test_support::{build_services, ctx_allow_tenants, ctx_deny_all, inmem_db, seed_user};
+
+async fn seed_users_sequential(db: &impl DBRunner, count: usize, tenant_id: Uuid) -> Vec<Uuid> {
+    let mut ids = Vec::with_capacity(count);
+    for i in 0..count {
+        let id = Uuid::new_v4();
+        seed_user(
+            db,
+            id,
+            tenant_id,
+            &format!("user{i}@example.com"),
+            &format!("User {i}"),
+        )
+        .await;
+        ids.push(id);
+
+        // ensure different timestamps for deterministic ordering
+        tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+    }
+    ids
+}
+
+#[tokio::test]
+async fn forward_pagination_over_multiple_pages() {
+    let db = inmem_db().await;
+    let tenant_id = Uuid::new_v4();
+    let conn = db.conn().unwrap();
+    let seeded = seed_users_sequential(&conn, 25, tenant_id).await;
+
+    let services = build_services(db.clone(), ServiceConfig::default());
+    let ctx = ctx_allow_tenants(&[tenant_id]);
+
+    let mut query = ODataQuery::default().with_limit(10);
+    let mut fetched = Vec::new();
+
+    loop {
+        let page = services.users.list_users_page(&ctx, &query).await.unwrap();
+        fetched.extend(page.items.iter().map(|u| u.id));
+        match page.page_info.next_cursor.clone() {
+            Some(c) => {
+                let decoded = CursorV1::decode(&c).expect("cursor must decode");
+                query = query.clone().with_cursor(decoded);
+            }
+            None => break,
+        }
+    }
+
+    assert_eq!(fetched.len(), 25);
+    // sanity: must be a permutation of seeded ids
+    for id in seeded {
+        assert!(fetched.contains(&id));
+    }
+}
+
+#[tokio::test]
+async fn deny_all_returns_forbidden() {
+    let db = inmem_db().await;
+    let tenant_id = Uuid::new_v4();
+    let conn = db.conn().unwrap();
+    seed_user(&conn, Uuid::new_v4(), tenant_id, "u@example.com", "U").await;
+
+    let services = build_services(db.clone(), ServiceConfig::default());
+    let ctx = ctx_deny_all();
+
+    // Anonymous context has no tenant → mock returns empty constraints
+    // → Decision Matrix: require_constraints=true + empty → ConstraintsRequiredButAbsent → Forbidden
+    let result = services
+        .users
+        .list_users_page(&ctx, &ODataQuery::default().with_limit(10))
+        .await;
+    assert!(
+        result.is_err(),
+        "Expected Forbidden error for anonymous context"
+    );
+}

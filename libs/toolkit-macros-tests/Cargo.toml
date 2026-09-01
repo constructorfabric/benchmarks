@@ -1,0 +1,26 @@
+[package]
+name = "cf-gears-toolkit-macros-tests"
+version = "0.6.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "UI tests for ToolKit macros (not published)"
+publish = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# The macro crate being tested
+toolkit-macros = { workspace = true }
+
+# Test framework
+trybuild = { workspace = true }
+
+# Dependencies needed by UI test cases (that import toolkit traits/types)
+tokio-util = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+toolkit = { workspace = true }

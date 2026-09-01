@@ -1,0 +1,32 @@
+[package]
+name = "cf-gears-fips-probe"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Outbound-HTTPS smoke probe that drives a real TLS handshake through the toolkit / toolkit-http stack and prints the negotiated cipher suite + the howsmyssl.com self-assessment JSON. Useful for verifying that a `--features fips` build is FIPS-conformant (only AES-GCM suites, P-curves, etc.) on macOS (corecrypto) and on Linux (AWS-LC FIPS)."
+readme = "README.md"
+publish = false
+
+[[bin]]
+name = "cf-gears-fips-probe"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Inherit the FIPS chain through toolkit / toolkit-http: on macOS this installs
+# the corecrypto provider, on non-macOS the AWS-LC FIPS provider.
+fips = ["toolkit/fips", "toolkit-http/fips"]
+
+[dependencies]
+toolkit = { workspace = true, features = ["bootstrap"] }
+toolkit-http = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
+clap = { workspace = true, features = ["derive"] }

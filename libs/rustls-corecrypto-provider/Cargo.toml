@@ -1,0 +1,80 @@
+[package]
+name = "cf-gears-rustls-corecrypto-provider"
+version = "0.1.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "rustls CryptoProvider routing TLS crypto through Apple's FIPS 140-3-validated corecrypto module via Security.framework + CommonCrypto on macOS. The crate itself is a *consumer* of the validated module; CMVP-validation belongs to Apple, not to this crate. See README 'FIPS claim boundaries' before relying on the claim."
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "rustls", "crypto", "tls"]
+categories = ["cryptography"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "rustls_corecrypto_provider"
+
+# This crate is a thin FFI wrapper over CommonCrypto; it inherently needs
+# `unsafe`. Workspace lints forbid unsafe code globally, so we opt out of
+# inheritance and re-state the rest of the workspace's `rust` lint set.
+[lints.rust]
+unsafe_code = "allow"
+deprecated = "warn"
+non_ascii_idents = "forbid"
+unused_mut = "warn"
+noop_method_call = "warn"
+unused_import_braces = "warn"
+
+[features]
+default = []
+# When enabled, `default_provider()` returns the same TLS-1.3-only
+# CryptoProvider as `fips_provider()` — `CryptoProvider::fips() = true`
+# unconditionally. Mirrors the feature-flag pattern in
+# [rustls-cng-crypto](https://github.com/tofay/rustls-cng-crypto/blob/main/src/lib.rs)
+# (where `#[cfg(feature = "fips")] pub use fips::provider as default_provider`).
+# Downstream callers that always want FIPS-claim correctness compile with
+# `--features fips` and don't have to remember which factory to call.
+fips = []
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Workspace pin already provides std + tls12; default-features locked at workspace level.
+# We do not require the aws_lc_rs backend ourselves, but feature unification across the
+# workspace may pull it in regardless — that is fine; we only register our own provider.
+rustls = { workspace = true }
+security-framework = "3.7"
+security-framework-sys = "2.14"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+zeroize = { workspace = true }
+subtle = "2"
+thiserror = { workspace = true }
+# Startup OE-validation logging (warning on non-FIPS, panic message on FIPS).
+# Workspace-pinned to match the rest of the tree.
+tracing = { workspace = true }
+
+# PKCS#8 + SEC1 envelope parsing for the server-side `KeyProvider`.
+# Apple's `SecKeyCreateWithData` accepts PKCS#1 (RSA) and ANSI X9.63 (EC)
+# but NOT PKCS#8 — these crates handle the structural unwrap.
+# Intentionally NO curve-arithmetic crates here: the EC `publicKey` is
+# read from the SEC1 `EcPrivateKey.publicKey` OPTIONAL field, never
+# derived from the private scalar outside the FIPS boundary (see ADR
+# 0007). If the input SEC1 lacks publicKey, we fail-closed.
+pkcs8 = { workspace = true }
+sec1 = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+hex = "0.4"
+tempfile = { workspace = true }
+# Hermetic env-var manipulation for the `oe::tests::override_*` tests --
+# safer than direct `std::env::set_var` calls under parallel cargo-test.
+temp-env = { workspace = true }
+# Test-cert + test-key generation for server-side handshake_smoke.
+rcgen = { workspace = true }
+serial_test = { workspace = true }
+# Cross-implementation RSA-PSS verifier (pure-Rust RustCrypto) — used to
+# assert that Apple's PSS signatures use the RFC-mandated salt_len =
+# hash_len. See TODO-4 in README. `pkcs1` (DER parsing of Apple's public
+# key bytes) is a transitive dep, not a feature, so we don't list it here.
+rsa = { version = "0.9", default-features = false, features = ["std"] }
+sha2 = { version = "0.10", default-features = false }

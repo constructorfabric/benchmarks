@@ -1,0 +1,68 @@
+# Test configuration for static_tr_plugin integration testing
+#
+# This config uses auth_disabled mode with the hardcoded tenant ID from
+# toolkit-security/constants.rs (DEFAULT_TENANT_ID).
+#
+# Run with:
+#   cargo run --bin cf-gears-server -- --config config/test-static-tr.yaml run
+
+server:
+  home_dir: "~/.cf-gears"
+
+database:
+  servers:
+    sqlite_test:
+      engine: "sqlite"
+      params:
+        WAL: "true"
+      pool:
+        max_conns: 5
+
+gears:
+  credstore:
+    database:
+      server: "sqlite_test"
+      file: "credstore.db"
+    config:
+      # Gateway selects its value-store backend plugin by GTS vendor;
+      # must match static-credstore-plugin (default "constructorfabric").
+      vendor: "constructorfabric"
+
+  api-gateway:
+    config:
+      bind_addr: "127.0.0.1:8087"
+      enable_docs: true
+      auth_disabled: true  # Uses DEFAULT_TENANT_ID from toolkit-security
+
+  types-registry:
+    config: {}
+
+  static-tr-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      tenants:
+        # Default tenant (used when auth_disabled)
+        # Matches DEFAULT_TENANT_ID from toolkit-security/constants.rs
+        - id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          name: "Dev Tenant"
+          status: active
+          type: development
+        # Child of Dev Tenant
+        - id: "22222222-2222-2222-2222-222222222222"
+          name: "Partner Tenant"
+          status: active
+          type: partner
+          parent_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  users-info:
+    database:
+      server: "sqlite_test"
+      file: "users_info_test.db"
+    config:
+      default_page_size: 10
+      max_page_size: 100

@@ -1,0 +1,13 @@
+error[E0599]: the method `create` exists for struct `ResourceErrorBuilder<toolkit_canonical_errors::builder::ResourceMissing, toolkit_canonical_errors::builder::NoContext>`, but its trait bounds were not satisfied
+  --> tests/ui/missing_resource_on_not_found.rs:10:63
+   |
+10 |     let _err = UserResourceError::not_found("User not found").create();
+   |                                                               ^^^^^^ method cannot be called due to unsatisfied trait bounds
+   |
+  ::: src/builder.rs
+   |
+   | pub struct ResourceMissing;
+   | -------------------------- doesn't satisfy `_: ResourceResolved`
+   |
+   = note: the following trait bounds were not satisfied:
+           `toolkit_canonical_errors::builder::ResourceMissing: toolkit_canonical_errors::builder::ResourceResolved`

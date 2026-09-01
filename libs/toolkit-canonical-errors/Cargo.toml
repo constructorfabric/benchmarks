@@ -1,0 +1,41 @@
+[package]
+name = "cf-gears-toolkit-canonical-errors"
+version = "0.9.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ToolKit canonical error types based on Google AIP-193 error model"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "cf-gears-toolkit"]
+categories = ["rust-patterns"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "toolkit_canonical_errors"
+
+[features]
+default = []
+sea-orm = ["dep:sea-orm"]
+axum = ["dep:axum", "dep:http", "dep:tracing"]
+utoipa = ["dep:utoipa"]
+debug-problem = []
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sea-orm = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+toolkit-canonical-errors-macro = { workspace = true }
+toolkit-gts = { workspace = true }
+
+[dev-dependencies]
+trybuild = { workspace = true }

@@ -1,0 +1,56 @@
+[package]
+name = "cf-gears-toolkit-auth"
+version = "0.7.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ToolKit authentication library"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "cf-gears-toolkit"]
+categories = ["development-tools"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "toolkit_auth"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Core dependencies
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+time = { workspace = true }
+arc-swap = { workspace = true }
+tracing = { workspace = true }
+jsonwebtoken = { workspace = true }
+tower = { workspace = true }
+http = { workspace = true }
+
+# HTTP client
+toolkit-http = { workspace = true }
+url = { workspace = true }
+
+# OAuth2 token lifecycle
+rand = { workspace = true }
+base64 = { workspace = true }
+
+# Shared utilities
+toolkit-utils = { workspace = true, features = ["serde"] }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+bytes = { workspace = true }
+http-body-util = { workspace = true }
+httpmock = { workspace = true }
+# Enable toolkit-http's `otel` feature for examples/tests so the
+# `with_otel_metrics*` builder methods are available (see examples/oauth2_metrics.rs).
+# Dev-only: a plain `cargo build` of the library does not pull this in.
+toolkit-http = { workspace = true, features = ["otel"] }

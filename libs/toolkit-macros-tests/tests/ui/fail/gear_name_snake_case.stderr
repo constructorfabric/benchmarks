@@ -1,0 +1,6 @@
+error: gear name must use kebab-case, not snake_case
+              = help: use 'file-parser' instead of 'file_parser'
+ --> tests/ui/fail/gear_name_snake_case.rs:6:12
+  |
+6 |     name = "file_parser",  // Should fail: uses snake_case instead of kebab-case
+  |            ^^^^^^^^^^^^^

@@ -1,0 +1,1390 @@
+use crate::{claims_error::ClaimsError, traits::KeyProvider};
+use arc_swap::ArcSwap;
+use async_trait::async_trait;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use jsonwebtoken::{Algorithm, DecodingKey, Header, decode_header};
+use serde::Deserialize;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
+
+#[derive(Debug, Clone, Deserialize)]
+struct Jwk {
+    kid: String,
+    kty: String,
+    #[serde(rename = "use")]
+    #[allow(dead_code)]
+    use_: Option<String>,
+    n: String,
+    e: String,
+    #[allow(dead_code)]
+    alg: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct JwksResponse {
+    keys: Vec<Jwk>,
+}
+
+/// Handler for non-string custom JWT header fields; return `Some` to keep as string, or `None` to drop.
+type HeaderExtrasHandler = dyn Fn(&str, &Value) -> Option<String> + Send + Sync;
+
+/// Standard JWT header field names from RFC 7515 (JWS), RFC 7516 (JWE),
+/// RFC 7518 (JWA), RFC 7797 (b64), and RFC 8555 (ACME).
+const STANDARD_HEADER_FIELDS: &[&str] = &[
+    "typ", "alg", "cty", "jku", "jwk", "kid", "x5u", "x5c", "x5t", "x5t#S256", "crit", "enc",
+    "zip", "url", "nonce", "epk", "apu", "apv", "iv", "tag", "p2s", "p2c", "b64",
+];
+
+/// JWKS-based key provider with lock-free reads
+///
+/// Uses `ArcSwap` for lock-free key lookups and background refresh with exponential backoff.
+#[must_use]
+pub struct JwksKeyProvider {
+    /// JWKS endpoint URL
+    jwks_uri: String,
+
+    /// Keys stored in `ArcSwap` for lock-free reads
+    keys: Arc<ArcSwap<HashMap<String, DecodingKey>>>,
+
+    /// Last refresh time and error tracking for backoff
+    refresh_state: Arc<RwLock<RefreshState>>,
+
+    /// Shared HTTP client for JWKS fetches (pooled connections)
+    /// `HttpClient` is `Clone + Send + Sync`, no external locking needed.
+    client: toolkit_http::HttpClient,
+
+    /// Refresh interval (default: 5 minutes)
+    refresh_interval: Duration,
+
+    /// Maximum backoff duration (default: 1 hour)
+    max_backoff: Duration,
+
+    /// Cooldown for on-demand refresh (default: 60 seconds)
+    on_demand_refresh_cooldown: Duration,
+
+    /// Optional handler for non-string custom JWT header fields.
+    /// Called for each non-standard field whose value is not a JSON string.
+    /// Return `Some(s)` to keep, `None` to drop.
+    header_extras_handler: Option<Arc<HeaderExtrasHandler>>,
+}
+
+#[derive(Debug, Default)]
+struct RefreshState {
+    last_refresh: Option<Instant>,
+    last_on_demand_refresh: Option<Instant>,
+    consecutive_failures: u32,
+    last_error: Option<String>,
+    failed_kids: HashSet<String>,
+}
+
+impl JwksKeyProvider {
+    /// Create a new JWKS key provider
+    ///
+    /// # Errors
+    /// Returns error if HTTP client initialization fails (e.g., TLS setup)
+    pub fn new(jwks_uri: impl Into<String>) -> Result<Self, toolkit_http::HttpError> {
+        Self::with_http_timeout(jwks_uri, Duration::from_secs(10))
+    }
+
+    /// Create a new JWKS key provider with custom HTTP timeout
+    ///
+    /// # Errors
+    /// Returns error if HTTP client initialization fails (e.g., TLS setup)
+    pub fn with_http_timeout(
+        jwks_uri: impl Into<String>,
+        timeout: Duration,
+    ) -> Result<Self, toolkit_http::HttpError> {
+        let client = toolkit_http::HttpClient::builder()
+            .timeout(timeout)
+            .retry(None) // JWKS provider handles its own retry logic
+            .build()?;
+
+        Ok(Self {
+            jwks_uri: jwks_uri.into(),
+            keys: Arc::new(ArcSwap::from_pointee(HashMap::new())),
+            refresh_state: Arc::new(RwLock::new(RefreshState::default())),
+            client,
+            refresh_interval: Duration::from_mins(5), // 5 minutes
+            max_backoff: Duration::from_hours(1),     // 1 hour
+            on_demand_refresh_cooldown: Duration::from_mins(1), // 1 minute
+            header_extras_handler: None,
+        })
+    }
+
+    /// Create a new JWKS key provider (alias for new, kept for compatibility)
+    ///
+    /// # Errors
+    /// Returns error if HTTP client initialization fails (e.g., TLS setup)
+    pub fn try_new(jwks_uri: impl Into<String>) -> Result<Self, toolkit_http::HttpError> {
+        Self::new(jwks_uri)
+    }
+
+    /// Create with custom refresh interval
+    pub fn with_refresh_interval(mut self, interval: Duration) -> Self {
+        self.refresh_interval = interval;
+        self
+    }
+
+    /// Create with custom max backoff
+    pub fn with_max_backoff(mut self, max_backoff: Duration) -> Self {
+        self.max_backoff = max_backoff;
+        self
+    }
+
+    /// Create with custom on-demand refresh cooldown
+    pub fn with_on_demand_refresh_cooldown(mut self, cooldown: Duration) -> Self {
+        self.on_demand_refresh_cooldown = cooldown;
+        self
+    }
+
+    /// Stringify all non-string custom JWT header fields.
+    ///
+    /// Convenience wrapper around [`with_header_extras_handler`](Self::with_header_extras_handler)
+    /// that converts every non-string value to its JSON representation
+    /// (e.g. `123` → `"123"`, `true` → `"true"`, `[1,2]` → `"[1,2]"`).
+    pub fn with_header_extras_stringified(self) -> Self {
+        self.with_header_extras_handler(|_, v| Some(v.to_string()))
+    }
+
+    /// Set a handler for non-string custom JWT header fields.
+    ///
+    /// `jsonwebtoken::Header::extras` is `HashMap<String, String>` and rejects
+    /// non-string values. This callback is invoked for each such field.
+    /// Return `Some(s)` to keep, `None` to drop.
+    /// Without a handler, upstream `decode_header` is used as-is.
+    pub fn with_header_extras_handler(
+        mut self,
+        handler: impl Fn(&str, &Value) -> Option<String> + Send + Sync + 'static,
+    ) -> Self {
+        self.header_extras_handler = Some(Arc::new(handler));
+        self
+    }
+
+    /// Fetch JWKS from the endpoint
+    async fn fetch_jwks(&self) -> Result<HashMap<String, DecodingKey>, ClaimsError> {
+        // HttpClient is Clone + Send + Sync, no locking needed
+        let jwks: JwksResponse = self
+            .client
+            .get(&self.jwks_uri)
+            .send()
+            .await
+            .map_err(|e| map_http_error(&e))?
+            .json()
+            .await
+            .map_err(|e| map_http_error(&e))?;
+
+        let mut keys = HashMap::new();
+        for jwk in jwks.keys {
+            if jwk.kty == "RSA" {
+                let key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
+                    .map_err(|e| ClaimsError::JwksFetchFailed(format!("Invalid RSA key: {e}")))?;
+                keys.insert(jwk.kid, key);
+            }
+        }
+
+        if keys.is_empty() {
+            return Err(ClaimsError::JwksFetchFailed(
+                "No valid RSA keys found in JWKS".into(),
+            ));
+        }
+
+        Ok(keys)
+    }
+
+    /// Calculate backoff duration based on consecutive failures
+    fn calculate_backoff(&self, failures: u32) -> Duration {
+        let base = Duration::from_mins(1); // 1 minute base
+        let exponential = base * 2u32.pow(failures.min(10)); // Cap at 2^10
+        exponential.min(self.max_backoff)
+    }
+
+    /// Check if refresh is needed based on interval and backoff
+    async fn should_refresh(&self) -> bool {
+        let state = self.refresh_state.read().await;
+
+        match state.last_refresh {
+            None => true, // Never refreshed
+            Some(last) => {
+                let elapsed = last.elapsed();
+                if state.consecutive_failures == 0 {
+                    // Normal refresh interval
+                    elapsed >= self.refresh_interval
+                } else {
+                    // Exponential backoff
+                    elapsed >= self.calculate_backoff(state.consecutive_failures)
+                }
+            }
+        }
+    }
+
+    /// Perform key refresh with error tracking
+    async fn perform_refresh(&self) -> Result<(), ClaimsError> {
+        match self.fetch_jwks().await {
+            Ok(new_keys) => {
+                // Update keys atomically
+                self.keys.store(Arc::new(new_keys));
+
+                // Update refresh state
+                let mut state = self.refresh_state.write().await;
+                state.last_refresh = Some(Instant::now());
+                state.consecutive_failures = 0;
+                state.last_error = None;
+
+                Ok(())
+            }
+            Err(e) => {
+                // Update failure state
+                let mut state = self.refresh_state.write().await;
+                state.last_refresh = Some(Instant::now());
+                state.consecutive_failures += 1;
+                state.last_error = Some(e.to_string());
+
+                Err(e)
+            }
+        }
+    }
+
+    /// Check if a key exists in the cache
+    fn key_exists(&self, kid: &str) -> bool {
+        let keys = self.keys.load();
+        keys.contains_key(kid)
+    }
+
+    /// Check if we're in cooldown period and handle throttling logic
+    async fn check_refresh_throttle(&self, kid: &str) -> Result<(), ClaimsError> {
+        let state = self.refresh_state.read().await;
+        if let Some(last_on_demand) = state.last_on_demand_refresh {
+            let elapsed = last_on_demand.elapsed();
+            if elapsed < self.on_demand_refresh_cooldown {
+                let remaining = self.on_demand_refresh_cooldown.saturating_sub(elapsed);
+                tracing::debug!(
+                    kid = kid,
+                    remaining_secs = remaining.as_secs(),
+                    "On-demand JWKS refresh throttled (cooldown active)"
+                );
+
+                // Check if this kid has failed before
+                if state.failed_kids.contains(kid) {
+                    tracing::warn!(
+                        kid = kid,
+                        "Unknown kid repeatedly requested despite recent refresh attempts"
+                    );
+                }
+
+                return Err(ClaimsError::UnknownKeyId(kid.to_owned()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Update state after successful refresh and check if kid is now available
+    async fn handle_refresh_success(&self, kid: &str) -> Result<(), ClaimsError> {
+        let mut state = self.refresh_state.write().await;
+        state.last_on_demand_refresh = Some(Instant::now());
+
+        // Check if the kid now exists
+        if self.key_exists(kid) {
+            // Kid found - remove from failed list if present
+            state.failed_kids.remove(kid);
+        } else {
+            // Kid still not found after refresh - track it
+            state.failed_kids.insert(kid.to_owned());
+            tracing::warn!(
+                kid = kid,
+                "Kid still not found after on-demand JWKS refresh"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Update state after failed refresh
+    async fn handle_refresh_failure(&self, kid: &str, error: ClaimsError) -> ClaimsError {
+        let mut state = self.refresh_state.write().await;
+        state.last_on_demand_refresh = Some(Instant::now());
+        state.failed_kids.insert(kid.to_owned());
+        error
+    }
+
+    /// Try to refresh keys if unknown kid is encountered
+    /// Implements throttling to prevent excessive refreshes
+    async fn on_demand_refresh(&self, kid: &str) -> Result<(), ClaimsError> {
+        // Check if key exists
+        if self.key_exists(kid) {
+            return Ok(());
+        }
+
+        // Check if we're in cooldown period
+        self.check_refresh_throttle(kid).await?;
+
+        // Attempt refresh and track the kid if it fails
+        tracing::info!(
+            kid = kid,
+            "Performing on-demand JWKS refresh for unknown kid"
+        );
+
+        match self.perform_refresh().await {
+            Ok(()) => self.handle_refresh_success(kid).await,
+            Err(e) => Err(self.handle_refresh_failure(kid, e).await),
+        }
+    }
+
+    /// Get a key by kid (lock-free read)
+    fn get_key(&self, kid: &str) -> Option<DecodingKey> {
+        let keys = self.keys.load();
+        keys.get(kid).cloned()
+    }
+
+    /// Validate JWT signature and decode claims without re-parsing the header.
+    ///
+    /// Uses `jsonwebtoken::crypto::verify` directly instead of `decode()`,
+    /// because `decode()` internally calls `decode_header()` which fails
+    /// on non-string custom header fields (e.g. `"eap": 1`).
+    fn validate_token(
+        token: &str,
+        key: &DecodingKey,
+        header: &Header,
+    ) -> Result<Value, ClaimsError> {
+        // Enforce exactly three dot-separated segments: header.payload.signature
+        let parts: Vec<&str> = token.splitn(4, '.').collect();
+        if parts.len() != 3 {
+            return Err(ClaimsError::DecodeFailed("Invalid JWT structure".into()));
+        }
+        let signing_input = &token[..parts[0].len() + 1 + parts[1].len()];
+        let payload_b64 = parts[1];
+        let signature = parts[2];
+
+        // Enforce the FIPS-approved JWT algorithm allow-list before invoking
+        // the underlying crypto library — an attacker who controls the header
+        // must not be able to pick a non-FIPS algorithm.
+        fips_allow_alg(header.alg)?;
+
+        // Verify signature over header.payload (the original signing input)
+        let valid =
+            jsonwebtoken::crypto::verify(signature, signing_input.as_bytes(), key, header.alg)
+                .map_err(|e| {
+                    ClaimsError::DecodeFailed(format!("JWT signature verification failed: {e}"))
+                })?;
+        if !valid {
+            return Err(ClaimsError::InvalidSignature);
+        }
+
+        // Decode payload
+        let payload_bytes = URL_SAFE_NO_PAD
+            .decode(payload_b64.trim_end_matches('='))
+            .map_err(|e| ClaimsError::DecodeFailed(format!("JWT payload decode failed: {e}")))?;
+        let claims: Value = serde_json::from_slice(&payload_bytes)
+            .map_err(|e| ClaimsError::DecodeFailed(format!("JWT claims parse failed: {e}")))?;
+
+        Ok(claims)
+    }
+}
+
+#[async_trait]
+impl KeyProvider for JwksKeyProvider {
+    fn name(&self) -> &'static str {
+        "jwks"
+    }
+
+    async fn validate_and_decode(&self, token: &str) -> Result<(Header, Value), ClaimsError> {
+        // Strip "Bearer " prefix if present
+        let token = token.trim_start_matches("Bearer ").trim();
+
+        // Decode header to get kid and algorithm
+        let header = match &self.header_extras_handler {
+            Some(handler) => decode_header_with_handler(token, handler.as_ref()),
+            None => decode_header(token),
+        }
+        .map_err(|e| ClaimsError::DecodeFailed(format!("Invalid JWT header: {e}")))?;
+
+        let kid = header
+            .kid
+            .as_ref()
+            .ok_or_else(|| ClaimsError::DecodeFailed("Missing kid in JWT header".into()))?;
+
+        // Try to get key from cache
+        let key = if let Some(k) = self.get_key(kid) {
+            k
+        } else {
+            // Key not in cache, try on-demand refresh
+            self.on_demand_refresh(kid).await?;
+
+            // Try again after refresh
+            self.get_key(kid)
+                .ok_or_else(|| ClaimsError::UnknownKeyId(kid.clone()))?
+        };
+
+        // Validate signature and decode claims
+        let claims = Self::validate_token(token, &key, &header)?;
+
+        Ok((header, claims))
+    }
+
+    async fn refresh_keys(&self) -> Result<(), ClaimsError> {
+        if self.should_refresh().await {
+            self.perform_refresh().await
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Background task to periodically refresh JWKS
+///
+/// This task will run until the `cancellation_token` is cancelled, enabling
+/// graceful shutdown per `ToolKit` patterns. Without cancellation support, this
+/// task would run indefinitely and potentially cause process hang on shutdown.
+///
+/// # Example
+///
+/// ```ignore
+/// use tokio_util::sync::CancellationToken;
+/// use std::sync::Arc;
+///
+/// let provider = Arc::new(JwksKeyProvider::new("https://issuer/.well-known/jwks.json")?);
+/// let cancel_token = CancellationToken::new();
+///
+/// // Spawn the refresh task
+/// let task_handle = tokio::spawn(run_jwks_refresh_task(provider.clone(), cancel_token.clone()));
+///
+/// // On shutdown:
+/// cancel_token.cancel();
+/// task_handle.await?;
+/// ```
+pub async fn run_jwks_refresh_task(
+    provider: Arc<JwksKeyProvider>,
+    cancellation_token: CancellationToken,
+) {
+    let mut interval = tokio::time::interval(Duration::from_mins(1)); // Check every minute
+
+    loop {
+        tokio::select! {
+            () = cancellation_token.cancelled() => {
+                tracing::info!("JWKS refresh task shutting down");
+                break;
+            }
+            _ = interval.tick() => {
+                if let Err(e) = provider.refresh_keys().await {
+                    tracing::warn!("JWKS refresh failed: {}", e);
+                }
+            }
+        }
+    }
+}
+
+/// Decode a JWT header, routing non-string custom fields through `handler`.
+///
+/// Returns `Some(s)` to keep the field, `None` to drop it.
+fn decode_header_with_handler(
+    token: &str,
+    handler: &dyn Fn(&str, &Value) -> Option<String>,
+) -> Result<Header, jsonwebtoken::errors::Error> {
+    let header_b64 = token
+        .split('.')
+        .next()
+        .ok_or(jsonwebtoken::errors::ErrorKind::InvalidToken)?;
+
+    let header_bytes = URL_SAFE_NO_PAD
+        .decode(header_b64.trim_end_matches('='))
+        .map_err(jsonwebtoken::errors::ErrorKind::Base64)?;
+
+    let mut json: serde_json::Map<String, Value> = serde_json::from_slice(&header_bytes)?;
+
+    json.retain(|key, value| {
+        if STANDARD_HEADER_FIELDS.contains(&key.as_str()) || value.is_string() {
+            return true;
+        }
+        match handler(key, value) {
+            Some(s) => {
+                *value = Value::String(s);
+                true
+            }
+            None => false,
+        }
+    });
+
+    Ok(serde_json::from_value(Value::Object(json))?)
+}
+
+/// Map `HttpError` variants to appropriate `ClaimsError` messages
+fn map_http_error(e: &toolkit_http::HttpError) -> ClaimsError {
+    ClaimsError::JwksFetchFailed(crate::http_error::format_http_error(e, "JWKS"))
+}
+
+/// FIPS-140-3 approved JWT signature algorithms.
+///
+/// An attacker who controls the JWT header can otherwise pick any algorithm
+/// that the underlying crypto library recognises (e.g. `EdDSA`, or an `ES384`
+/// over a non-FIPS curve). This list is the defensive allow-list that gates
+/// `jsonwebtoken::crypto::verify` in `validate_token`.
+///
+/// | Family     | Approved algorithms      |
+/// |------------|--------------------------|
+/// | RSA PKCS#1 | `RS256`, `RS384`, `RS512` |
+/// | RSA-PSS    | `PS256`, `PS384`, `PS512` |
+/// | ECDSA      | `ES256`, `ES384`          |
+/// | HMAC       | `HS256`, `HS384`, `HS512` |
+///
+/// # Errors
+/// Returns `ClaimsError::UnsupportedAlgorithm` for any algorithm outside the
+/// approved set. The conversion in `claims_error.rs` surfaces this as
+/// `AuthError::UnsupportedAlgorithm` at the public API boundary.
+fn fips_allow_alg(alg: Algorithm) -> Result<(), ClaimsError> {
+    // The match is intentionally exhaustive (no wildcard arm) so that adding a
+    // new variant to `jsonwebtoken::Algorithm` forces a compile-time decision
+    // here. For a defensive security gate, fail-closed-at-build-time is the
+    // correct default — wildcards silently default-allow or default-reject
+    // future variants without human review.
+    match alg {
+        Algorithm::RS256
+        | Algorithm::RS384
+        | Algorithm::RS512
+        | Algorithm::PS256
+        | Algorithm::PS384
+        | Algorithm::PS512
+        | Algorithm::ES256
+        | Algorithm::ES384
+        | Algorithm::HS256
+        | Algorithm::HS384
+        | Algorithm::HS512 => Ok(()),
+        Algorithm::EdDSA => Err(ClaimsError::UnsupportedAlgorithm(format!("{alg:?}"))),
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use httpmock::prelude::*;
+
+    /// Create a test provider with insecure HTTP allowed (for httpmock) and no retries
+    fn test_provider_with_http(uri: &str) -> JwksKeyProvider {
+        let client = toolkit_http::HttpClient::builder()
+            .timeout(Duration::from_secs(5))
+            .retry(None)
+            .build()
+            .expect("failed to create test HTTP client");
+
+        JwksKeyProvider {
+            jwks_uri: uri.to_owned(),
+            keys: Arc::new(ArcSwap::from_pointee(HashMap::new())),
+            refresh_state: Arc::new(RwLock::new(RefreshState::default())),
+            client,
+            refresh_interval: Duration::from_mins(5),
+            max_backoff: Duration::from_hours(1),
+            on_demand_refresh_cooldown: Duration::from_mins(1),
+            header_extras_handler: None,
+        }
+    }
+
+    /// Create a basic test provider (HTTPS only, for non-network tests)
+    fn test_provider(uri: &str) -> JwksKeyProvider {
+        JwksKeyProvider::new(uri).expect("failed to create test provider")
+    }
+
+    /// Valid JWKS JSON response with a single RSA key
+    fn valid_jwks_json() -> &'static str {
+        r#"{
+            "keys": [{
+                "kty": "RSA",
+                "kid": "test-key-1",
+                "use": "sig",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB",
+                "alg": "RS256"
+            }]
+        }"#
+    }
+
+    #[tokio::test]
+    async fn test_calculate_backoff() {
+        let provider = test_provider("https://example.com/jwks");
+
+        assert_eq!(provider.calculate_backoff(0), Duration::from_mins(1));
+        assert_eq!(provider.calculate_backoff(1), Duration::from_mins(2));
+        assert_eq!(provider.calculate_backoff(2), Duration::from_mins(4));
+        assert_eq!(provider.calculate_backoff(3), Duration::from_mins(8));
+
+        // Should cap at max_backoff
+        assert_eq!(provider.calculate_backoff(100), provider.max_backoff);
+    }
+
+    #[tokio::test]
+    async fn test_should_refresh_on_first_call() {
+        let provider = test_provider("https://example.com/jwks");
+        assert!(provider.should_refresh().await);
+    }
+
+    #[tokio::test]
+    async fn test_key_storage() {
+        let provider = test_provider("https://example.com/jwks");
+
+        // Initially empty
+        assert!(provider.get_key("test-kid").is_none());
+
+        // Store a dummy key
+        let mut keys = HashMap::new();
+        keys.insert("test-kid".to_owned(), DecodingKey::from_secret(b"secret"));
+        provider.keys.store(Arc::new(keys));
+
+        // Should be retrievable
+        assert!(provider.get_key("test-kid").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_on_demand_refresh_returns_ok_when_key_exists() {
+        let provider = test_provider("https://example.com/jwks");
+
+        // Pre-populate with a key
+        let mut keys = HashMap::new();
+        keys.insert(
+            "existing-kid".to_owned(),
+            DecodingKey::from_secret(b"secret"),
+        );
+        provider.keys.store(Arc::new(keys));
+
+        // Should return Ok immediately without any refresh
+        let result = provider.on_demand_refresh("existing-kid").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_try_new_returns_result() {
+        // Valid URL should work
+        let result = JwksKeyProvider::try_new("https://example.com/jwks");
+        assert!(result.is_ok());
+    }
+
+    // ==================== httpmock-based tests ====================
+
+    #[tokio::test]
+    async fn test_fetch_jwks_success_with_valid_json() {
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(valid_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let result = provider.perform_refresh().await;
+        assert!(result.is_ok(), "Expected success, got: {result:?}");
+
+        // Verify key was stored
+        assert!(
+            provider.get_key("test-key-1").is_some(),
+            "Expected key 'test-key-1' to be stored"
+        );
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_jwks_http_404_error_mapping() {
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(404).body("Not Found");
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let result = provider.perform_refresh().await;
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("JWKS HTTP 404"),
+            "Expected error to contain 'JWKS HTTP 404', got: {err_msg}"
+        );
+        // Must NOT say "parse"
+        assert!(
+            !err_msg.to_lowercase().contains("parse"),
+            "HTTP status error should not mention 'parse', got: {err_msg}"
+        );
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_jwks_http_500_error_mapping() {
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(500).body("Internal Server Error");
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let result = provider.perform_refresh().await;
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("JWKS HTTP 500"),
+            "Expected error to contain 'JWKS HTTP 500', got: {err_msg}"
+        );
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_jwks_invalid_json_error_mapping() {
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("this is not valid json");
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let result = provider.perform_refresh().await;
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("JWKS JSON parse failed"),
+            "Expected error to contain 'JWKS JSON parse failed', got: {err_msg}"
+        );
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_jwks_empty_keys_error() {
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"keys": []}"#);
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let result = provider.perform_refresh().await;
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("No valid RSA keys"),
+            "Expected error about no RSA keys, got: {err_msg}"
+        );
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_on_demand_refresh_respects_cooldown() {
+        let server = MockServer::start();
+
+        // First request will return 404
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(404).body("Not Found");
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url)
+            .with_on_demand_refresh_cooldown(Duration::from_mins(1));
+
+        // First attempt - should try to refresh and fail
+        let result1 = provider.on_demand_refresh("test-kid").await;
+        assert!(result1.is_err());
+
+        // Immediate second attempt - should be throttled (no network call)
+        let result2 = provider.on_demand_refresh("test-kid").await;
+        assert!(result2.is_err());
+
+        // Should return UnknownKeyId due to cooldown
+        match result2.unwrap_err() {
+            ClaimsError::UnknownKeyId(_) => {}
+            other => panic!("Expected UnknownKeyId during cooldown, got: {other:?}"),
+        }
+
+        // Only one request should have been made (first attempt)
+        mock.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn test_on_demand_refresh_tracks_failed_kids() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(404).body("Not Found");
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url)
+            .with_on_demand_refresh_cooldown(Duration::from_millis(100));
+
+        // Attempt refresh - will fail and track the kid
+        let result = provider.on_demand_refresh("failed-kid").await;
+        assert!(result.is_err());
+
+        // Check that failed_kids contains the kid
+        let state = provider.refresh_state.read().await;
+        assert!(state.failed_kids.contains("failed-kid"));
+    }
+
+    #[tokio::test]
+    async fn test_perform_refresh_updates_state_on_failure() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(500).body("Server Error");
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        // Mark as previously failed
+        {
+            let mut state = provider.refresh_state.write().await;
+            state.consecutive_failures = 3;
+            state.last_error = Some("Previous error".to_owned());
+        }
+
+        // This will fail
+        _ = provider.perform_refresh().await;
+
+        // Check that consecutive_failures increased
+        let state = provider.refresh_state.read().await;
+        assert_eq!(state.consecutive_failures, 4);
+        assert!(state.last_error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_perform_refresh_resets_state_on_success() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(valid_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        // Mark as previously failed
+        {
+            let mut state = provider.refresh_state.write().await;
+            state.consecutive_failures = 5;
+            state.last_error = Some("Previous error".to_owned());
+        }
+
+        // This should succeed
+        let result = provider.perform_refresh().await;
+        assert!(result.is_ok());
+
+        // Check that state was reset
+        let state = provider.refresh_state.read().await;
+        assert_eq!(state.consecutive_failures, 0);
+        assert!(state.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_decode_with_missing_kid() {
+        let server = MockServer::start();
+
+        // Return valid JWKS but without the requested kid
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(valid_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url)
+            .with_on_demand_refresh_cooldown(Duration::from_millis(100));
+
+        // Create a minimal JWT with a kid that doesn't exist in JWKS
+        // Header: {"alg":"RS256","kid":"nonexistent-kid"}
+        let token = "eyJhbGciOiJSUzI1NiIsImtpZCI6Im5vbmV4aXN0ZW50LWtpZCJ9.\
+                     eyJzdWIiOiIxMjM0NTY3ODkwIn0.invalid";
+
+        // Should attempt on-demand refresh but kid still won't exist
+        let result = provider.validate_and_decode(token).await;
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            ClaimsError::UnknownKeyId(kid) => {
+                assert_eq!(kid, "nonexistent-kid");
+            }
+            other => panic!("Expected UnknownKeyId, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_decode_header_with_handler_coerces_non_string_extras() {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        // Header with non-standard fields: integer, string, and array
+        let header_json = r#"{"alg":"RS256","eap":1,"iri":"some-string-id","irn":["role_a"],"kid":"kid-1","typ":"at+jwt"}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(b"{}");
+        let token = format!("{header_b64}.{payload_b64}.fake");
+
+        let header = decode_header_with_handler(&token, &|_key, value| Some(value.to_string()))
+            .expect("should handle non-standard header fields");
+
+        assert_eq!(header.alg, jsonwebtoken::Algorithm::RS256);
+        assert_eq!(header.kid.as_deref(), Some("kid-1"));
+        assert_eq!(header.typ.as_deref(), Some("at+jwt"));
+
+        // Non-string extras coerced to JSON text
+        assert_eq!(header.extras.get("eap").map(String::as_str), Some("1"));
+        assert_eq!(
+            header.extras.get("irn").map(String::as_str),
+            Some(r#"["role_a"]"#)
+        );
+        // String extras preserved as-is
+        assert_eq!(
+            header.extras.get("iri").map(String::as_str),
+            Some("some-string-id")
+        );
+    }
+
+    #[test]
+    fn test_decode_header_with_handler_can_drop_fields() {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let header_json = r#"{"alg":"RS256","eap":1,"iri":"keep-me","kid":"kid-1","typ":"JWT"}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let token = format!("{header_b64}.e30.fake");
+
+        let header = decode_header_with_handler(&token, &|_key, _value| None)
+            .expect("should succeed when handler drops non-string fields");
+
+        assert_eq!(header.alg, jsonwebtoken::Algorithm::RS256);
+        assert!(!header.extras.contains_key("eap"));
+        assert_eq!(
+            header.extras.get("iri").map(String::as_str),
+            Some("keep-me")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_with_header_extras_stringified_coerces_non_string_extras() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(valid_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url).with_header_extras_stringified();
+
+        // Header with non-string extras: integer and array
+        let header_json =
+            r#"{"alg":"RS256","kid":"test-key-1","typ":"JWT","eap":1,"irn":["role_a"]}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(b"{}");
+        let token = format!("{header_b64}.{payload_b64}.AAAA");
+
+        let result = provider.validate_and_decode(&token).await;
+
+        // The handler lets header decode succeed; error must come from signature
+        // validation, not from header parsing.
+        let err = result.expect_err("fake signature should fail validation");
+        assert!(
+            matches!(
+                &err,
+                ClaimsError::InvalidSignature | ClaimsError::DecodeFailed(_)
+            ),
+            "Expected signature-related error, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_decode_uses_header_extras_handler() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(valid_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url)
+            .with_header_extras_handler(|_key, value| Some(value.to_string()));
+
+        // Header with a non-string extra ("eap":1) that would reject without handler
+        let header_json = r#"{"alg":"RS256","kid":"test-key-1","typ":"JWT","eap":1}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(b"{}");
+        let token = format!("{header_b64}.{payload_b64}.AAAA");
+
+        let result = provider.validate_and_decode(&token).await;
+
+        // Handler lets header decode succeed → error must come from signature
+        // validation, not from header parsing.
+        let err = result.expect_err("fake signature should fail validation");
+        assert!(
+            matches!(
+                &err,
+                ClaimsError::InvalidSignature | ClaimsError::DecodeFailed(_)
+            ),
+            "Expected signature-related error, got: {err:?}"
+        );
+    }
+
+    /// RSA private key (PKCS#8 PEM) used to sign test JWTs.
+    /// The matching public-key components (n, e) are served by `signed_jwks_json()`.
+    const TEST_RSA_PRIVATE_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCohcw9B9YK7ULF
+KgrGNJKAH0BH9CpJB03wIkQl6ECCJ/BfmBsNSWwZdnG0cWwwGhsSSSj32AKB+t6W
+44/vi9hv+PHusIRCMNqM/AJ/zA7xau9mNsxS8U8J3olm74vLFtF05hTRmJuefMmz
+mOt4kMP44UeVg0nyFlToa0SmhMxIeFgz2VgktHjHDe/rr/FdrjMwxesz3ezj+Y4k
+YPPrQfMZJTyEd68M+pPkjyg6AkakNSUJp+dZibnRLKcj6Ehz1W3lSGkaQ4YFSXVX
+UCaHWNmPsJHejwKrUA/fbkYi3sLO7cW/4h+b2laWsL9qC4P2RJMbZBzklJoL+WoH
+Lo5zUvo7AgMBAAECggEACrynlBXdOcn/EI/KqvErilUzY8I3NXrtKMkOHXosLf68
+bmLDCngslny45t25HmFzaxlVLmFJW52vs95gy8rVqeCrDWGas5roOcZOpHTMWO5O
+vWztXLV6Ky9OAsxtVC2qf6+vEOGPvKvHsBUkn4RdsAwuYuS//9gTZdF7yL46Q72o
+pJ8bLUZBpqmVNyLxyfbFn8u9j71zMUweB9vOMYAIAv1cYRa/0bVYLIZumcotY822
+B0ny1fLru1gDJt2p1DL9fQTg16pBYr1V0nhoiktS8Lx5PFLMI+NhmalBerqtPN+u
+qqauu9jolmXtydfOP7pTN2sqGFAKlcx55KZlVLK2YQKBgQDaiRxPXnFCPY4yYBxS
+POFJe8UcvoM3d5HGwQfbJ5PHq+YN8NW0ACaox6QQkQYmE9OHriHrVmp4af6erN2K
+zbjmL41E5C4MzEau2ipZWY4GA+lLXomEiHsUD0cfqfL+7Fs6ufiG2nXrWIBXggz8
+8mTdP/LHMPybY0wxoZI5Xij+2wKBgQDFacPh+PhT0U8wu7nSgvQ85ozJN7TWq0KD
+TgWuZ0W6L5OlAAVernYuvvRH/Uy9JqVfX4KLHbcEcdUx8t5usKMf8S3kQyMM8xK+
+KaEYZNOMdA6E9PAJVD8crDQT/QD6/+oHrTTFFKxW7jWLY1ggWXVHk4CxLXBlDnKQ
+xIA5DuhgIQKBgQCA5Km77loi1aeO8r0BjELcUpH52CwQhQeIEMYPbpJtDGhOBKQm
+3IfwuH99/euAfeUfe4cqBPgbOXkiIZcxjRDnQ1ixL1wx1DJEYwzjUjzAM4JgH8xA
+TTc6p6AtftGBpepRAusgrq0qODLKajw63MS88kDBV5VGGRURmNhj2bOYTQKBgHPr
+hiVj/9Wf+6M/KH9vfCFis9rYBi1jxRu7LeTaKXyJwWXLHFwbj7QlVuYK3AvZ7JOT
+TuGHoldOzISW+3v95tuz0GHP9n39Ic1ePoVHd11rLLdv6J9hw+l/SNlP4EqDCZZW
+Y70yRXyKRhDCVhYw0YglGhVv/CarFCTj7fMTSOphAoGBAJcM4H4qmCFLdR9FRQgT
+YJPGcyjWPmm9tlb8M6rSJGPlfpAhKjRVGWwpHPiUnvrW296QKr9+5q43HRcK3qa5
+GU5n8VxYiniVFVMSEpLJgvu7hGq5fmMiRTTot1pOTSXZ1LY6rDQvjsTeGQumb/Eo
+F8gvjIeiwVfp4nDnO2JFexiy
+-----END PRIVATE KEY-----";
+
+    /// JWKS JSON whose public key matches `TEST_RSA_PRIVATE_PEM`.
+    fn signed_jwks_json() -> &'static str {
+        r#"{
+            "keys": [{
+                "kty": "RSA",
+                "kid": "sign-key-1",
+                "use": "sig",
+                "n": "qIXMPQfWCu1CxSoKxjSSgB9AR_QqSQdN8CJEJehAgifwX5gbDUlsGXZxtHFsMBobEkko99gCgfreluOP74vYb_jx7rCEQjDajPwCf8wO8WrvZjbMUvFPCd6JZu-LyxbRdOYU0ZibnnzJs5jreJDD-OFHlYNJ8hZU6GtEpoTMSHhYM9lYJLR4xw3v66_xXa4zMMXrM93s4_mOJGDz60HzGSU8hHevDPqT5I8oOgJGpDUlCafnWYm50SynI-hIc9Vt5UhpGkOGBUl1V1Amh1jZj7CR3o8Cq1AP325GIt7Czu3Fv-Ifm9pWlrC_aguD9kSTG2Qc5JSaC_lqBy6Oc1L6Ow",
+                "e": "AQAB",
+                "alg": "RS256"
+            }]
+        }"#
+    }
+
+    /// Build a properly-signed RS256 JWT for testing.
+    fn build_signed_jwt(kid: &str, claims: &serde_json::Value) -> String {
+        let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_PEM)
+            .expect("test RSA PEM should be valid");
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+        header.kid = Some(kid.to_owned());
+        jsonwebtoken::encode(&header, claims, &encoding_key).expect("JWT signing should succeed")
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_decode_happy_path() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(signed_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let claims = serde_json::json!({
+            "sub": "user-42",
+            "name": "Test User",
+            "iat": 1_700_000_000u64
+        });
+        let token = build_signed_jwt("sign-key-1", &claims);
+
+        let (header, decoded_claims) = provider
+            .validate_and_decode(&token)
+            .await
+            .expect("validate_and_decode should succeed for a properly signed token");
+
+        assert_eq!(header.alg, jsonwebtoken::Algorithm::RS256);
+        assert_eq!(header.kid.as_deref(), Some("sign-key-1"));
+        assert_eq!(decoded_claims["sub"], "user-42");
+        assert_eq!(decoded_claims["name"], "Test User");
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_decode_with_bearer_prefix() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(signed_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let claims = serde_json::json!({"sub": "user-99"});
+        let token = format!("Bearer {}", build_signed_jwt("sign-key-1", &claims));
+
+        let (_, decoded_claims) = provider
+            .validate_and_decode(&token)
+            .await
+            .expect("should strip Bearer prefix and succeed");
+
+        assert_eq!(decoded_claims["sub"], "user-99");
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_decode_rejects_tampered_payload() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(signed_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let claims = serde_json::json!({"sub": "legit"});
+        let token = build_signed_jwt("sign-key-1", &claims);
+
+        // Tamper with the payload segment
+        let parts: Vec<&str> = token.splitn(3, '.').collect();
+        let tampered_payload = URL_SAFE_NO_PAD.encode(br#"{"sub":"evil"}"#);
+        let tampered_token = format!("{}.{}.{}", parts[0], tampered_payload, parts[2]);
+
+        let err = provider
+            .validate_and_decode(&tampered_token)
+            .await
+            .expect_err("tampered token should fail signature verification");
+
+        assert!(
+            matches!(err, ClaimsError::InvalidSignature),
+            "Expected InvalidSignature, got: {err:?}"
+        );
+    }
+
+    /// Build a JWT with a custom header JSON (for non-string extras), properly signed.
+    fn build_signed_jwt_custom_header(header_json: &str, claims: &serde_json::Value) -> String {
+        let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_PEM)
+            .expect("test RSA PEM should be valid");
+        let header_b64 = URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).unwrap());
+        let message = format!("{header_b64}.{payload_b64}");
+        let signature = jsonwebtoken::crypto::sign(
+            message.as_bytes(),
+            &encoding_key,
+            jsonwebtoken::Algorithm::RS256,
+        )
+        .expect("signing should succeed");
+        format!("{message}.{signature}")
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_decode_with_non_string_header_extras() {
+        let server = MockServer::start();
+
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(signed_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url).with_header_extras_stringified();
+
+        let claims = serde_json::json!({"sub": "user-extras"});
+        let header_json = r#"{"alg":"RS256","kid":"sign-key-1","typ":"JWT","eap":1}"#;
+        let token = build_signed_jwt_custom_header(header_json, &claims);
+
+        let (header, decoded_claims) = provider
+            .validate_and_decode(&token)
+            .await
+            .expect("should decode JWT with non-string header extras when handler is set");
+
+        assert_eq!(header.alg, jsonwebtoken::Algorithm::RS256);
+        assert_eq!(header.kid.as_deref(), Some("sign-key-1"));
+        assert_eq!(header.extras.get("eap").map(String::as_str), Some("1"));
+        assert_eq!(decoded_claims["sub"], "user-extras");
+    }
+
+    #[test]
+    fn test_fips_allow_alg_accepts_full_approved_set() {
+        // Every algorithm in the FIPS-approved table must pass the helper.
+        for alg in [
+            Algorithm::RS256,
+            Algorithm::RS384,
+            Algorithm::RS512,
+            Algorithm::PS256,
+            Algorithm::PS384,
+            Algorithm::PS512,
+            Algorithm::ES256,
+            Algorithm::ES384,
+            Algorithm::HS256,
+            Algorithm::HS384,
+            Algorithm::HS512,
+        ] {
+            fips_allow_alg(alg)
+                .unwrap_or_else(|e| panic!("expected {alg:?} to be FIPS-approved, got: {e:?}"));
+        }
+    }
+
+    #[test]
+    fn test_fips_allow_alg_rejects_eddsa() {
+        let err = fips_allow_alg(Algorithm::EdDSA)
+            .expect_err("EdDSA must be rejected by the FIPS allow-list");
+        match err {
+            ClaimsError::UnsupportedAlgorithm(name) => {
+                assert_eq!(name, "EdDSA", "error must name the rejected algorithm");
+            }
+            other => panic!("expected UnsupportedAlgorithm, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_unsupported_algorithm_maps_to_auth_error() {
+        // The public API surface (`AuthError`) must expose the dedicated
+        // variant, not the generic `ValidationFailed` fallback.
+        let auth_err: crate::errors::AuthError =
+            ClaimsError::UnsupportedAlgorithm("EdDSA".to_owned()).into();
+        match auth_err {
+            crate::errors::AuthError::UnsupportedAlgorithm(name) => assert_eq!(name, "EdDSA"),
+            other => panic!("expected AuthError::UnsupportedAlgorithm, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_decode_rejects_disallowed_algorithm() {
+        // A token with `alg: "EdDSA"` must be rejected with
+        // `ClaimsError::UnsupportedAlgorithm` before the underlying
+        // `crypto::verify` is ever invoked. The kid matches a real RSA key in
+        // the served JWKS so the early failure isolates the algorithm check
+        // from unrelated lookup failures.
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(signed_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        // Build a token claiming EdDSA but with a real RSA-keyed `kid` and a
+        // syntactically valid (though semantically meaningless) signature
+        // segment. The signature contents never matter — the allow-list must
+        // fail first.
+        let header_json = r#"{"alg":"EdDSA","kid":"sign-key-1","typ":"JWT"}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(b"{\"sub\":\"u\"}");
+        let signature_b64 = URL_SAFE_NO_PAD.encode([0u8; 64]);
+        let token = format!("{header_b64}.{payload_b64}.{signature_b64}");
+
+        let err = provider
+            .validate_and_decode(&token)
+            .await
+            .expect_err("EdDSA token must be rejected by the FIPS allow-list");
+
+        match err {
+            ClaimsError::UnsupportedAlgorithm(name) => assert_eq!(name, "EdDSA"),
+            other => panic!("expected UnsupportedAlgorithm, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_decode_rejects_alg_none() {
+        // The `none` algorithm has been removed from `jsonwebtoken::Algorithm`
+        // entirely, so `decode_header` rejects it before the allow-list ever
+        // sees it. Either layer is acceptable — what matters is that the
+        // token never reaches signature verification.
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(signed_jwks_json());
+        });
+
+        let jwks_url = server.url("/jwks");
+        let provider = test_provider_with_http(&jwks_url);
+
+        let header_json = r#"{"alg":"none","kid":"sign-key-1","typ":"JWT"}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(b"{\"sub\":\"u\"}");
+        let token = format!("{header_b64}.{payload_b64}.");
+
+        let err = provider
+            .validate_and_decode(&token)
+            .await
+            .expect_err("alg=none token must be rejected");
+
+        assert!(
+            matches!(
+                err,
+                ClaimsError::DecodeFailed(_) | ClaimsError::UnsupportedAlgorithm(_)
+            ),
+            "expected DecodeFailed or UnsupportedAlgorithm, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_decode_header_without_handler_rejects_non_string_extras() {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let header_json = r#"{"alg":"RS256","eap":1,"kid":"kid-1","typ":"JWT"}"#;
+        let header_b64 = URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let token = format!("{header_b64}.e30.fake");
+
+        let result = decode_header(&token);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("invalid type: integer"),
+            "expected type error, got: {err}"
+        );
+    }
+}

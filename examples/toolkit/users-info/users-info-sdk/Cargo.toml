@@ -1,0 +1,40 @@
+[package]
+name = "users-info-sdk"
+version = "0.6.1"
+publish = false
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "SDK for user_info gear: API trait, types, and error definitions"
+
+[lints]
+workspace = true
+
+[features]
+default = ["odata"]
+odata = ["dep:toolkit-odata-macros", "dep:futures-core", "dep:toolkit-sdk", "dep:toolkit-odata"]
+
+[dependencies]
+# Core dependencies for API trait
+uuid = { workspace = true }
+time = { workspace = true }
+async-trait = { workspace = true }
+
+# Canonical error envelope (re-exported as `UsersInfoError`)
+toolkit-canonical-errors = { workspace = true }
+toolkit-gts = { workspace = true }
+
+# OData macros (for #[derive(ODataFilterable)])
+toolkit-odata-macros = { workspace = true, optional = true }
+
+# Streaming support
+futures-core = { workspace = true, optional = true }
+
+# Security context for API methods
+toolkit-security = { workspace = true }
+
+# SDK utilities (streaming, typed OData queries)
+toolkit-sdk = { workspace = true, optional = true }
+
+# OData support for pagination
+toolkit-odata = { workspace = true, optional = true }

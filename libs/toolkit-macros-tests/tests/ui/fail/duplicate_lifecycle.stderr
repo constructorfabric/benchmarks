@@ -1,0 +1,5 @@
+error: duplicate `lifecycle(...)` parameter
+ --> tests/ui/fail/duplicate_lifecycle.rs:3:69
+  |
+3 | #[gear(name="x", capabilities=[stateful], lifecycle(entry="serve"), lifecycle(entry="serve"))]
+  |                                                                     ^^^^^^^^^
