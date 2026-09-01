@@ -34,6 +34,9 @@ test-utils = [
 
 [dependencies]
 toolkit = { workspace = true }
+# `with-utoipa` is required so `toolkit_odata::Page<T>` implements
+# `utoipa::ToSchema` for the three list endpoints (A3).
+toolkit-odata = { workspace = true, features = ["with-utoipa"] }
 toolkit-auth = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
@@ -42,7 +45,9 @@ toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 inventory = { workspace = true }
 async-trait = { workspace = true }
-axum = { workspace = true }
+# `ws` is required by the data plane: the WebSocket upgrade extractor and the
+# tunnelling response body live behind the `axum::extract::ws` module.
+axum = { workspace = true, features = ["ws"] }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -72,13 +77,27 @@ psl = { workspace = true }
 thiserror = { workspace = true }
 mime = { workspace = true }
 # DP deps
+base64 = { workspace = true }
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
-tokio = { workspace = true, features = ["time"] }
+# `net` (TCP connectors, WS upstream), `io-util` (frame pumps) and `sync`
+# (in-flight gauges) are required by the outbound transport.
+tokio = { workspace = true, features = ["time", "net", "io-util", "sync"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+http-body-util = { workspace = true }
+# WebSocket client for `wss://`/`ws://` upstream tunnelling (A1). Native roots
+# are used instead of the bundled webpki set so the trust store matches the one
+# the HTTP connector (hyper-rustls) is configured with.
+tokio-tungstenite = { version = "0.29", default-features = false, features = [
+    "connect",
+    "handshake",
+    "rustls-tls-native-roots",
+] }
+tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
@@ -109,3 +128,6 @@ httpmock = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 futures-util = { workspace = true }
+
+[lints]
+workspace = true
