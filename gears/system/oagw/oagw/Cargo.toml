@@ -42,7 +42,7 @@ toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 inventory = { workspace = true }
 async-trait = { workspace = true }
-axum = { workspace = true }
+axum = { workspace = true, features = ["ws"] }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -73,12 +73,23 @@ thiserror = { workspace = true }
 mime = { workspace = true }
 # DP deps
 form_urlencoded = "1"
+# Outbound proxy transport: arbitrary methods, streaming request/response
+# bodies, TLS and connection pooling. Already resolved in the workspace
+# lockfile (toolkit-http builds on it); no new crates are introduced.
+reqwest = { workspace = true }
+# Upstream WebSocket framing over the already-upgraded reqwest connection.
+# Already resolved in the workspace lockfile (axum's `ws` feature depends on
+# it); no new crates are introduced.
+tokio-tungstenite = "0.29"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "net", "io-util", "rt", "sync"] }
 tokio-retry = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+# `tokio` enables `hyper_util::rt::TokioIo` (tokio <-> hyper IO adapter) used by
+# the outbound proxy transport. No new dependency: hyper-util is already a crate
+# dependency, only features of the existing lockfile entry are enabled.
+hyper-util = { workspace = true, features = ["tokio"] }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
