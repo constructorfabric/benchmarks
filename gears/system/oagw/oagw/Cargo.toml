@@ -15,6 +15,9 @@ metadata.docs.rs.all-features = true
 name = "oagw"
 path = "src/lib.rs"
 
+[lints]
+workspace = true
+
 [features]
 # FIPS-140-3: compile TLS deps with FIPS-approved cipher suites only
 fips = ["toolkit-http/fips"]
@@ -37,6 +40,9 @@ toolkit = { workspace = true }
 toolkit-auth = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
+# `SortDir` for `$orderby` direction comparison (the type behind
+# `toolkit::api::odata::parse_orderby`).
+toolkit-odata = { workspace = true }
 toolkit-http = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
@@ -44,6 +50,8 @@ inventory = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 http = { workspace = true }
+# `LengthLimitError` detection for the 413 mapping of oversized bodies.
+http-body-util = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
@@ -54,7 +62,9 @@ tracing = { workspace = true }
 url = { workspace = true }
 gts = { workspace = true }
 utoipa = { workspace = true }
-types-registry-sdk = { workspace = true }
+# Referenced by the `#[toolkit::gear(deps = [types_registry])]` expansion, which
+# re-exports the crate (`pub use ::types_registry as _gear_dep_types_registry`) to
+# force-link its `inventory::submit!` registrations.
 types-registry = { workspace = true }
 authz-resolver-sdk = { workspace = true }
 authz-resolver = { workspace = true }
@@ -78,7 +88,10 @@ futures-util = { workspace = true, features = ["sink"] }
 tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
-hyper-util = { workspace = true }
+# The WebSocket handshake dials through hyper-util's legacy client over a plain
+# `HttpConnector`; the features are spelled out so the build does not lean on
+# toolkit-http's feature unification.
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
