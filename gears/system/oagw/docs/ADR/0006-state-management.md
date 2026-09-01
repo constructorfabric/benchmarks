@@ -98,7 +98,7 @@ pub struct CPState {
 ```text
 DP receives proxy request
 ├─ Check DP L1 cache for resolved (upstream, route) config
-│  ├─ Hit: Use cached config (<1μs)
+│  ├─ Hit: Use cached config (<1microsecond)
 │  └─ Miss: Call CP.resolve_proxy_target(alias, method, path)
 │           ├─ Single tenant hierarchy walk: alias shadowing + route match
 │           ├─ Effective config merge (upstream < route < tenant)
@@ -117,7 +117,7 @@ On config write: CP writes to DB, flushes own caches, returns success. API Handl
 
 ### Consequences
 
-* Good, because fast path — DP serves hot configs from L1 (<1μs)
+* Good, because fast path — DP serves hot configs from L1 (<1microsecond)
 * Good, because reduced CP calls (only for cache misses)
 * Good, because simple rate limiting (no distributed coordination for MVP)
 * Bad, because DP L1 can temporarily diverge from CP (stale data)
@@ -138,7 +138,7 @@ DP makes CP call for every request (no L1 cache).
 
 ### DP with L1 cache + rate limiters
 
-* Good, because fast reads (<1μs for cached configs)
+* Good, because fast reads (<1microsecond for cached configs)
 * Good, because rate limiter has full request context
 * Bad, because cache consistency lag after writes
 
@@ -155,7 +155,7 @@ DP calls CP to check rate limits.
 
 * DP handles every proxy request
 * Reduces CP calls for hot configs
-* <1μs access time for cached configs
+* <1microsecond access time for cached configs
 * Small cache (1000 entries) has negligible memory overhead
 
 **Why rate limiters in DP**:
@@ -188,6 +188,6 @@ DP calls CP to check rate limits.
 
 This decision directly addresses the following requirements or design elements:
 
-* `cpt-cf-oagw-nfr-low-latency` — DP L1 cache provides <1μs config lookups on hot path
+* `cpt-cf-oagw-nfr-low-latency` — DP L1 cache provides <1microsecond config lookups on hot path
 * `cpt-cf-oagw-fr-rate-limiting` — Rate limiters owned by DP for per-instance enforcement
 * `cpt-cf-oagw-fr-request-proxy` — Caching strategy optimizes proxy request execution
