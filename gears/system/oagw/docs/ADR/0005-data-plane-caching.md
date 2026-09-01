@@ -39,7 +39,7 @@ Control Plane handles config resolution for Data Plane during proxy requests. Co
 
 ## Decision Drivers
 
-* Fast lookups for hot configs (<1μs L1, ~1-2ms L2)
+* Fast lookups for hot configs (<1us L1, ~1-2ms L2)
 * Reduced database load (queries only on cache miss)
 * Support for both single-exec (no Redis) and microservice (shared L2) deployment modes
 * Correct cache invalidation on config writes
@@ -59,7 +59,7 @@ Chosen option: "Multi-layer caching: L1 (in-memory) + optional L2 (Redis) + Data
 
 | Layer | Scope | Capacity | TTL | Access Time | Notes |
 |---|---|---|---|---|---|
-| L1 (In-Memory) | Per-instance LRU | 10,000 entries | No TTL (LRU eviction) | <1μs | |
+| L1 (In-Memory) | Per-instance LRU | 10,000 entries | No TTL (LRU eviction) | <1us | |
 | L2 (Redis, optional) | Shared across instances | Unbounded | 5 minutes | ~1-2ms | MessagePack serialization |
 | Database (PostgreSQL) | Source of truth (JSON text) | Unlimited | N/A | ~5-10ms | Queried only on L1+L2 miss |
 
@@ -69,7 +69,7 @@ Chosen option: "Multi-layer caching: L1 (in-memory) + optional L2 (Redis) + Data
 async fn get_config(key: &CacheKey) -> Result<ConfigValue> {
     // Check L1
     if let Some(value) = l1_cache.get(key) {
-        return Ok(value);  // <1μs
+        return Ok(value);  // <1us
     }
 
     // Check L2 (if enabled)
@@ -112,7 +112,7 @@ On config write (e.g., `PUT /upstreams/{id}`): (1) CP writes to database, (2) CP
 
 ### Consequences
 
-* Good, because fast lookups for hot configs (<1μs L1)
+* Good, because fast lookups for hot configs (<1us L1)
 * Good, because reduced database load
 * Good, because shared cache in microservice mode (L2)
 * Good, because simple deployment in single-exec mode (no Redis)
@@ -163,5 +163,5 @@ Integration tests verify: L1 cache hit returns correct config, L1 miss falls thr
 
 This decision directly addresses the following requirements or design elements:
 
-* `cpt-cf-oagw-nfr-low-latency` — L1 cache provides <1μs config lookups on hot path
+* `cpt-cf-oagw-nfr-low-latency` — L1 cache provides <1us config lookups on hot path
 * `cpt-cf-oagw-fr-request-proxy` — Config resolution during proxy request execution
