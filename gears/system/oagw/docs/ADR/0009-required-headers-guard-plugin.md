@@ -85,36 +85,43 @@ guard_request(ctx) / guard_response(ctx)
   ├─ Read required_request_headers / required_response_headers from ctx.config
   ├─ Absent or blank → Allow (fail-open, unconfigured)
   ├─ Parse: split on ',', trim, lowercase, drop empty entries
-  ├─ Scan ctx.headers for each required name (case-insensitive), in order
+  ├─ Scan parts.headers for each required name (case-insensitive), in order
   ├─ All present → Allow
   └─ First missing name found → Reject
-      ├─ Request phase  → status 400, error_code REQUIRED_HEADER_MISSING
-      └─ Response phase → status 502, error_code REQUIRED_HEADER_MISSING
+      ├─ Request phase  → DomainError::Validation      → 400 VALIDATION_FAILED
+      └─ Response phase → DomainError::DownstreamError → 502 DOWNSTREAM_ERROR
 ```
 
-Only the first missing header is reported per rejection, not the full set.
+Only the first missing header is reported per rejection, not the full set. The
+header name is carried in the problem `detail` ("required header
+'x-correlation-id' is missing"); there is no dedicated `error_code`.
 
 ### Registry Integration
 
 ```rust
-impl GuardPluginRegistry {
-    pub fn with_builtins() -> Self {
-        let mut plugins: HashMap<String, Arc<dyn GuardPlugin>> = HashMap::new();
-        plugins.insert(
-            REQUIRED_HEADERS_GUARD_PLUGIN_ID.to_string(),
-            Arc::new(RequiredHeadersGuardPlugin),
-        );
-        Self { plugins }
+// oagw/src/infra/plugin/mod.rs
+
+impl BuiltinPlugins {
+    pub fn with_builtins_optional(
+        credstore: Option<Arc<dyn credstore_sdk::CredStoreClientV1>>,
+    ) -> Self {
+        Self {
+            // ...
+            guards: Arc::new(GuardPluginRegistry::new(vec![Arc::new(
+                RequiredHeadersGuardPlugin,
+            )])),
+            // ...
+        }
     }
 }
 ```
 
-Note: `TIMEOUT_GUARD_PLUGIN_ID` and `CORS_GUARD_PLUGIN_ID` are declared as
-GTS constants and registered in the types-registry catalog
-(`type_catalog.rs`), but timeout and CORS enforcement are implemented as
-core Data Plane logic rather than `GuardPlugin` trait implementations —
-`RequiredHeadersGuardPlugin` is currently the only entry in
-`GuardPluginRegistry::with_builtins()`.
+Note: `GUARD_PLUGIN_TIMEOUT` and `GUARD_PLUGIN_CORS` are declared as GTS
+constants and catalogued in the types-registry as catalog-only
+(`CATALOG_ONLY_GUARD_PLUGINS`), but timeout and CORS enforcement are
+implemented as core Data Plane logic rather than `GuardPlugin` trait
+implementations — `RequiredHeadersGuardPlugin` is currently the only entry in
+`BUILTIN_GUARD_PLUGINS`.
 
 ### Upstream Configuration Example
 
@@ -166,9 +173,9 @@ core Data Plane logic rather than `GuardPlugin` trait implementations —
 
 Code review confirms: `RequiredHeadersGuardPlugin` implemented in
 `oagw/src/infra/plugin/required_headers_guard.rs`, registered under
-`REQUIRED_HEADERS_GUARD_PLUGIN_ID` (`oagw/src/domain/gts_helpers.rs`) in
-`GuardPluginRegistry::with_builtins()`
-(`oagw/src/infra/plugin/registry.rs`).
+`GUARD_PLUGIN_REQUIRED_HEADERS_INSTANCE` = `cf.core.oagw.required_headers.v1`
+(`oagw/src/domain/gts.rs`) in `BuiltinPlugins::with_builtins_optional`
+(`oagw/src/infra/plugin/mod.rs`).
 
 ## Pros and Cons of the Options
 
@@ -229,6 +236,9 @@ support "required" markers.
 ## References
 
 - `oagw/src/infra/plugin/required_headers_guard.rs` — plugin implementation
+- `oagw/src/infra/plugin/mod.rs` — `BuiltinPlugins::with_builtins{,_optional}` registration
+- `oagw/src/domain/gts.rs` — `GUARD_PLUGIN_REQUIRED_HEADERS{,_INSTANCE}` identifiers
+- `oagw/src/domain/plugin/mod.rs` — `GuardPlugin` trait and `GuardPluginRegistry`
 
 ## Traceability
 

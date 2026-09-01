@@ -344,11 +344,13 @@ If upstream creation resolves to an existing upstream definition (binding-style 
 ```text
 Partner Tenant:
   upstream: api.openai.com
-  auth: { secret_ref: "cred://partner-openai-key", sharing: "inherit" }
+  auth: { type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1",
+          config: { key_ref: "cred://partner-openai-key" }, sharing: "inherit" }
   rate_limit: { rate: 10000/min, sharing: "enforce" }
 
 Leaf Tenant (with permission):
-  auth: { secret_ref: "cred://my-own-openai-key" }  <- overrides partner's key
+  auth: { type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1",
+          config: { key_ref: "cred://my-own-openai-key" } }  <- overrides partner's key
   rate_limit: { rate: 100/min }  <- effective: min(10000, 100) = 100
 
 Leaf Tenant (without permission):
@@ -446,6 +448,7 @@ The system **MUST** return the following error codes for proxy and management op
 | 400  | ValidationError      | No        |
 | 401  | AuthenticationFailed | No        |
 | 404  | RouteNotFound        | No        |
+| 409  | AlreadyExists / PluginInUse | No  |
 | 413  | PayloadTooLarge      | No        |
 | 429  | RateLimitExceeded    | Yes       |
 | 500  | SecretNotFound       | No        |
@@ -518,11 +521,11 @@ The system **MUST** validate path, query parameters, headers, and body size for 
 
 - [ ] `p2` - **ID**: `cpt-cf-oagw-nfr-observability`
 
-The system **MUST** log all proxy requests with correlation IDs and expose Prometheus metrics for request counts, latencies, error rates, and rate limit state.
+The system **MUST** log all proxy requests with correlation IDs and emit OpenTelemetry metrics for request counts, latencies, error rates, and rate limit state.
 
-- **Threshold**: 100% of proxy requests logged with correlation ID; metrics scraped at /metrics endpoint
+- **Threshold**: 100% of proxy requests logged with correlation ID; metrics exported over OTLP push (Prometheus-compatible series are produced by the OTLP collector; the gear exposes no `/metrics` scrape endpoint)
 - **Rationale**: Operators need full visibility into outbound API traffic patterns, errors, and performance.
-- **Architecture Allocation**: See DESIGN.md § NFR Allocation for how this is realized
+- **Architecture Allocation**: See DESIGN.md §4.2 for the instrument set and the push transport.
 
 #### Starlark Sandbox
 

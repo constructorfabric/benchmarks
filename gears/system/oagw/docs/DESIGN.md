@@ -271,11 +271,11 @@ Multiple per upstream/route. Can reject requests before they reach upstream.
 
 **Transform Plugin** — Base type: `gts.cf.core.oagw.transform_plugin.v1~`
 
-Multiple per upstream/route, executed in order. Each plugin declares supported phases: `on_request`, `on_response`, `on_error`.
+Multiple per upstream/route, executed in order. The phases a plugin participates in are **not** declared on the wire or in the model: they are implied by which `TransformPlugin` trait methods the plugin implements — `on_request` (inbound mutation), `on_response` (outbound mutation) and `on_error` (failure path). A plugin that implements only `on_request` runs only on the inbound leg; there is no `phases` field in the plugin model or in any request/response body.
 
-| Plugin ID | Phase | Description |
+| Plugin ID | Implemented trait methods | Description |
 |---|---|---|
-| `gts.cf.core.oagw.transform_plugin.v1~cf.core.oagw.request_id.v1` | request, response | X-Request-ID injection/propagation |
+| `gts.cf.core.oagw.transform_plugin.v1~cf.core.oagw.request_id.v1` | `on_request`, `on_response` | X-Request-ID injection/propagation |
 
 `logging.v1` and `metrics.v1` are core Data Plane instrumentation (`infra/metrics.rs`, `tracing`), not `TransformPlugin` trait implementations. Their GTS identifiers exist for types-registry cataloging only and are not resolvable via `TransformPluginRegistry`.
 
@@ -317,29 +317,45 @@ The database stores:
 
 ```text
 gears/system/oagw/
-└── oagw/                  # Single gear crate with internal service isolation
-    └── src/
-        ├── lib.rs         # Public exports
-        ├── gear.rs      # ToolKit gear wiring
-        ├── config.rs      # OagwConfig
-        ├── api/rest/      # Transport layer
-        │   ├── handlers/  # Axum HTTP handlers (management + proxy)
-        │   ├── routes/    # OperationBuilder route registration
-        │   ├── dto.rs     # REST DTOs (serde + utoipa)
-        │   ├── error.rs   # Error response mapping
-        │   └── extractors.rs
-        ├── domain/        # Business logic (no infra dependencies)
-        │   ├── services/  # ControlPlaneService + DataPlaneService traits & impls
-        │   ├── plugin/    # AuthPlugin trait definition
-        │   ├── dto.rs     # Internal domain types (ProxyContext, ProxyResponse, etc.)
-        │   ├── repo.rs    # Repository traits (UpstreamRepository, RouteRepository)
-        │   └── error.rs   # DomainError
-        └── infra/         # Infrastructure implementations
-            ├── proxy/     # DataPlaneServiceImpl (Pingora in-memory bridge)
-            ├── storage/   # Repository impls (SeaORM-based)
-            ├── plugin/    # AuthPluginRegistry + built-in plugins (ApiKey, NoOp)
-            └── type_provisioning.rs  # GTS type registration
+└── oagw/                    # Single gear crate with internal service isolation
+    ├── src/
+    │   ├── lib.rs           # Public exports
+    │   ├── gear.rs          # ToolKit gear wiring (dual-prefix REST mount)
+    │   ├── config.rs        # OagwConfig
+    │   ├── api/
+    │   │   └── rest/        # Transport layer
+    │   │       ├── dto.rs       # REST DTOs (serde)
+    │   │       ├── error.rs     # Error mapping + converting extractors
+    │   │       ├── handlers.rs  # Axum handlers (Control Plane)
+    │   │       ├── proxy.rs     # Axum handlers (Data Plane)
+    │   │       ├── routes.rs    # OperationBuilder route registration
+    │   │       └── mod.rs
+    │   ├── domain/          # Business logic (no infra dependencies)
+    │   │   ├── services/    # ControlPlaneService + DataPlaneService traits
+    │   │   ├── plugin/      # AuthPlugin / GuardPlugin / TransformPlugin traits
+    │   │   ├── alias.rs     # Alias derivation, normalization and update rules
+    │   │   ├── cors.rs      # CORS policy validation
+    │   │   ├── merge.rs     # Hierarchical configuration merge
+    │   │   ├── ratelimit.rs # Rate-limit policy types
+    │   │   ├── routing.rs   # Route matching and target-host selection
+    │   │   ├── gts.rs       # GTS identifier helpers
+    │   │   ├── model.rs     # Upstream / Route / Plugin model
+    │   │   ├── repo.rs      # Repository traits (UpstreamRepository, RouteRepository)
+    │   │   └── error.rs     # DomainError + problem descriptors
+    │   └── infra/           # Infrastructure implementations
+    │       ├── controlplane/  # ControlPlaneServiceImpl
+    │       ├── proxy/         # DataPlaneServiceImpl + outbound client
+    │       ├── storage/       # Repository impls (in-memory, see DEVIATIONS.md)
+    │       ├── plugin/        # Built-in auth/guard/transform plugins
+    │       ├── ratelimit.rs   # Token-bucket registry
+    │       └── metrics.rs     # OpenTelemetry metric instruments
+    └── tests/               # Integration tests (REST + proxy harness)
 ```
+
+Unit tests for a module live next to it as a sibling `*_tests.rs` included by
+the module file (`alias_tests.rs`, `routing_tests.rs`, `error_tests.rs`,
+`ratelimit_tests.rs`, `metrics_tests.rs`, `storage_tests.rs`); end-to-end
+behaviour is covered by the integration tests in `tests/`.
 
 #### Internal Services
 
@@ -353,7 +369,26 @@ gears/system/oagw/
 | `/api/oagw/v1/upstreams/*` | Control Plane | Upstream CRUD |
 | `/api/oagw/v1/routes/*` | Control Plane | Route CRUD |
 | `/api/oagw/v1/plugins/*` | Control Plane | Plugin CRUD |
-| `/api/oagw/v1/proxy/*` | Data Plane | Proxy requests |
+| `/api/oagw/v1/proxy/{alias}[/{path_suffix}]` | Data Plane | Proxy requests |
+| `/api/oagw/v1/ws/{alias}/{*path_suffix}` | Data Plane | WebSocket-friendly alias of the proxy path |
+
+**Dual-prefix mount**: the OAGW sub-router is built once at `/oagw/v1/...` and mounted
+**twice** — merged onto the platform router (so `/oagw/v1/...` resolves) and nested under
+`/api` (so `/api/oagw/v1/...` resolves). `/oagw/v1/...` is the in-cluster
+(inter-gear) form and `/api/oagw/v1/...` is the externally published contract form of
+§3.3. This is an explicit compatibility decision: both prefixes are live, serve the
+same handlers, and are declared in the OpenAPI document at the `/oagw/v1/...` paths.
+
+Every endpoint, Control Plane and Data Plane, is registered through the toolkit
+`OperationBuilder::register(router, openapi)` path, so a route cannot exist without a
+declared OpenAPI operation. `HEAD` and `OPTIONS` are served on the proxy paths but are
+not declared as separate OpenAPI operations: the toolkit OpenAPI generator folds any
+method other than `GET`/`POST`/`PUT`/`PATCH`/`DELETE` onto the `get` entry of the path
+item, so declaring them would overwrite the documented `GET` operation. They are
+documented in the operation descriptions instead.
+
+The undocumented `/oagw/v1/events/...` prefix was removed: server-sent events are
+relayed by the generic proxy path, which needs no separate registration.
 
 #### Plugin System
 
@@ -377,7 +412,7 @@ Plugin chain composition: upstream plugins execute before route plugins (`[U1, U
 - Guard: `timeout`, `cors`
 - Transform: `logging`, `metrics`
 
-**Custom Plugins**: Starlark scripts with sandboxed execution (no network/file I/O, timeout/memory limits enforced). Immutable after creation; GC for unlinked plugins after configurable TTL.
+**Custom Plugins**: Starlark scripts with sandboxed execution (no network/file I/O, timeout/memory limits enforced). Immutable after creation. Deletion is explicit and refused while any upstream or route still references the plugin; no TTL-based garbage collection is implemented (see §4.5 "Plugin versioning and lifecycle management").
 
 #### Hierarchical Configuration
 
@@ -406,7 +441,7 @@ Alias behavior is determined entirely by endpoint type. The system enforces stri
 |---|---|---|
 | Hostname, standard port | Auto-derived (hostname) | `api.openai.com:443` → `api.openai.com` |
 | Hostname, non-standard port | Auto-derived (hostname:port) | `api.openai.com:8443` → `api.openai.com:8443` |
-| Multiple hostnames, registrable common suffix (PSL-validated) | Auto-derived via `common_domain_suffix()` — shared suffix must be a registrable domain (≥2 labels, not a bare public suffix) | `us.vendor.com`, `eu.vendor.com` → `vendor.com` |
+| Multiple hostnames, registrable common suffix (PSL-validated) | Auto-derived via `compute_derived_alias()` — shared suffix must be a registrable domain (≥2 labels, not a bare public suffix) | `us.vendor.com`, `eu.vendor.com` → `vendor.com` |
 | Multiple hostnames, common suffix is a bare public suffix | Explicit alias **required** (derivation rejected) | `foo.co.uk`, `bar.co.uk` → **not** derivable (`co.uk` is a public suffix) |
 | Multiple hostnames, no registrable common suffix | Explicit alias **required** | `us.foo.com`, `eu.bar.com` → user must provide alias |
 | IP addresses | Explicit alias **required** | `10.0.1.1`, `10.0.1.2` → user provides `my-service` |
@@ -431,7 +466,7 @@ Alias behavior is determined entirely by endpoint type. The system enforces stri
 | Non-derivable → Derivable (IP → hostname) | Allowed — derived alias equals existing | **Rejected** — delete and re-create |
 | No endpoint change (derivable or non-derivable) | Exact-match alias tolerated (no-op) | **Rejected** — alias override not allowed |
 
-"Derivable" means `compute_derived_alias()` returns a value (single hostname, or multiple hostnames with a registrable common suffix). "Non-derivable" means derivation fails — this includes IP-based endpoints, heterogeneous hostnames with no common suffix, and hostname pools whose only common suffix is a bare public suffix (e.g., `co.uk`). See `enforce_alias_update_with()` / `enforce_alias_update_derived()` for the full branching logic.
+"Derivable" means `compute_derived_alias()` returns a value (single hostname, or multiple hostnames with a registrable common suffix). "Non-derivable" means derivation fails — this includes IP-based endpoints, heterogeneous hostnames with no common suffix, and hostname pools whose only common suffix is a bare public suffix (e.g., `co.uk`). See `enforce_alias_update_with()` in `oagw/src/domain/alias.rs` (and its private `common_label_suffix` helper) for the full branching logic.
 
 For multi-host endpoints with non-standard ports, the common suffix derivation preserves `:port` in the alias (e.g., `us.vendor.com:8443` + `eu.vendor.com:8443` → `vendor.com:8443`). This avoids collisions between pools sharing the same domain suffix on different ports — operators should reference the `suffix:port` form when routing to these upstreams.
 
@@ -514,21 +549,22 @@ Rules that mutate inbound → outbound:
 - **Immutable**: Plugins cannot be updated after creation
 - **Versioning**: Create new plugin for changes, update upstream/route references
 - **Deletion**: Only unlinked plugins can be deleted
-- **Garbage Collection**: Unlinked plugins are automatically deleted after TTL (default: 30 days). A periodic GC job marks plugins eligible by setting `gc_eligible_at` when they become unlinked, and deletes plugin rows once `gc_eligible_at` is in the past.
+
+Garbage collection of unlinked plugins is **out of scope** for this slice — see §4.5 and §4.7.
 
 **Named plugins**: Not stored in `oagw_plugin`. Resolved via in-process registry. Not subject to GC.
 
 #### Secret Access Control
 
-Auth configuration references secrets via `secret_ref` (e.g., `cred://partner-openai-key`). OAGW does not manage secret sharing — this is handled by `cred_store`.
+Auth configuration references secret material through the per-plugin `config` object of the auth plugin binding, using the keys the plugins actually read (`oagw/src/infra/plugin/`): `key_ref` for the `apikey` auth plugin, and `client_id_ref` / `client_secret_ref` for the `oauth2_client_cred` / `oauth2_client_cred_basic` auth plugins — all holding a `cred://` reference (e.g., `cred://partner-openai-key`). OAGW does not manage secret sharing — this is handled by `cred_store`.
 
 **Resolution flow**:
-1. OAGW resolves `secret_ref` via `cred_store` API
+1. OAGW resolves the referenced `cred://` key via the `cred_store` API
 2. `cred_store` checks if secret is accessible to current tenant (own or shared by ancestor)
 3. If accessible → return secret material
 4. If not → return error, OAGW returns 401 Unauthorized
 
-Ancestor can share a secret with descendants via `cred_store` policies. Descendant can also use own secret with different `secret_ref`.
+Ancestor can share a secret with descendants via `cred_store` policies. Descendant can also use own secret with a different `cred://` reference.
 
 #### Permissions and Access Control
 
@@ -641,11 +677,11 @@ All CRUD operations are strictly scoped to the calling tenant. Ancestor resource
 | GET / List | Yes | 404 |
 | Proxy (data plane) | Yes | Inherited via tenant chain walk |
 
-At proxy time, `resolve_alias` walks the tenant chain (descendant → root) to find the closest enabled upstream by alias, then searches the chain for matching routes. Descendant routes take priority. Ancestor routes are inherited but cannot be viewed or modified through the management API.
+At proxy time, `resolve_proxy_target(alias, method, path)` walks the tenant chain (descendant → root) to find the closest enabled upstream by alias, then searches the chain for matching routes, returning a `ResolvedTarget` (the effective upstream, the matched route and the merged configuration). Descendant routes take priority. Ancestor routes are inherited but cannot be viewed or modified through the management API.
 
 #### List Query Parameters
 
-All list endpoints support OData query parameters: `$filter`, `$select`, `$orderby`, `$top`, `$skip`.
+All list endpoints support OData query parameters: `$filter`, `$select`, `$orderby`, `$top`, `$skip`. A plain-name alias is accepted for every parameter (`?filter=…`, `?top=…`), so the same query works against URL encoders that do not preserve the `$` prefix.
 
 **Upstream**:
 
@@ -673,12 +709,29 @@ All list endpoints support OData query parameters: `$filter`, `$select`, `$order
 |---|---|---|
 | `$filter` | string | OData filter (e.g., `type eq 'guard'`) |
 | `$select` | string | Fields to return |
-| `$top` | integer | Max results |
+| `$orderby` | string | Sort order |
+| `$top` | integer | Max results (default: 50, max: 100) |
 | `$skip` | integer | Offset for pagination |
+| `type` / `plugin_type` | string | Shorthand for `$filter = "type eq '<value>'"` (`auth`, `guard`, `transform`). Applied **in addition** to `$filter`, never instead of it. |
 
 #### Proxy API
 
 `{METHOD} /api/oagw/v1/proxy/{alias}[/{path_suffix}][?{query_parameters}]`
+
+The path is declared for `GET`, `POST`, `PUT`, `PATCH` and `DELETE`, and additionally serves `HEAD` and `OPTIONS` (relayed, not declared as separate operations — see §3.2). Every method is relayed through the same handler, and a request carrying an `Upgrade` token is relayed as a raw bidirectional stream (`tests/proxy_ws_tests.rs` exercises the WebSocket case).
+
+| Status | Condition |
+|---|---|
+| `400` | Route/match validation, `X-OAGW-Target-Host` errors |
+| `401` | Missing or invalid inbound credentials |
+| `403` | Authorization denied, CORS origin/method rejection |
+| `404` | Unknown alias or no matching route |
+| `413` | Request payload above the 100 MB hard limit |
+| `429` | Rate limit exhausted |
+| `500` | Secret resolution failure |
+| `502` | Protocol / downstream / stream errors |
+| `503` | Link unavailable, circuit breaker open, disabled upstream |
+| `504` | Connection, request-head or idle timeout |
 
 Request classification uses `upstream.protocol` to determine match strategy:
 - HTTP: method allowlist + longest path prefix match
@@ -698,6 +751,7 @@ All gateway errors follow RFC 9457 Problem Details (`application/problem+json`) 
 | AuthenticationFailed | 401 | `gts.cf.core.errors.err.v1~cf.oagw.auth.failed.v1` | No | Authentication to upstream failed |
 | RouteNotFound | 404 | `gts.cf.core.errors.err.v1~cf.oagw.route.not_found.v1` | No | No matching route found |
 | PluginInUse | 409 | `gts.cf.core.errors.err.v1~cf.oagw.plugin.in_use.v1` | No | Plugin in use |
+| AlreadyExists | 409 | `gts.cf.core.errors.err.v1~cf.core.err.already_exists.v1` | No | Write conflict: alias already bound, or route match rule already defined |
 | PayloadTooLarge | 413 | `gts.cf.core.errors.err.v1~cf.oagw.payload.too_large.v1` | No | Request payload exceeds limit |
 | RateLimitExceeded | 429 | `gts.cf.core.errors.err.v1~cf.oagw.rate_limit.exceeded.v1` | Yes | Rate limit exceeded |
 | SecretNotFound | 500 | `gts.cf.core.errors.err.v1~cf.oagw.secret.not_found.v1` | No | Referenced secret not found |
@@ -712,16 +766,29 @@ All gateway errors follow RFC 9457 Problem Details (`application/problem+json`) 
 | IdleTimeout | 504 | `gts.cf.core.errors.err.v1~cf.oagw.timeout.idle.v1` | Yes | Idle timeout |
 
 **Standard Fields** (RFC 9457):
+
 - `type`: GTS identifier for the error type (used for programmatic error handling)
 - `title`: Human-readable summary
 - `status`: HTTP status code
 - `detail`: Human-readable explanation specific to this occurrence
-- `instance`: URI reference identifying the specific occurrence
+- `instance`: URI reference identifying the specific occurrence — the request path the client called, including the `/api` prefix of the nested mount
 
-**Extension Fields** (OAGW-specific):
-- `upstream_id`, `host`, `path`: Request context
-- `retry_after_seconds`: Retry guidance
-- `trace_id`: For distributed tracing correlation
+Every problem is rendered with `Content-Type: application/problem+json` and `X-OAGW-Error-Source: gateway`; the table above is the complete set of `type` values the gateway emits.
+
+**Extension Fields** (OAGW-specific, always present unless noted):
+
+- `error_domain`: Fixed `oagw.v1` — the domain the `error_code` belongs to.
+- `error_code`: Machine-readable variant name inside `error_domain` (e.g. `ALREADY_EXISTS`, `PLUGIN_IN_USE`); one-to-one with the `type` rows above.
+- `context`: Object carrying error-specific structured payload. Empty (`{}`) except for `PluginInUse`, where it repeats `plugin_id` and `referenced_by`.
+- `instance`: Present on every problem produced by a request handler (see above).
+- `path`: Request path of the failing call (mirrors `instance`; useful when a client logs the body without the HTTP URI line).
+- `host`: Alias of the upstream the request was resolved to. Present on data-plane problems only.
+- `retry_after_seconds`: Present only when the row above is marked *Retriable* (`429`, `503`, `504`); the same value is sent as the `Retry-After` header.
+- `plugin_id`, `referenced_by`: Present on `409 PluginInUse` only, at top level as well as inside `context`.
+
+`upstream_id` and `trace_id` are reserved for the extension set but are **not** emitted yet: the data-plane service resolves the selected upstream internally and only surfaces a `DomainError`, and no trace identifier is propagated to the gateway handlers. They are recorded in `DEVIATIONS.md`.
+
+**Request validation failures** (`400`/`415`/`422`) are reported as the canonical `ValidationError` problem, not as axum's plain-text rejections: an unparsable JSON body or an unusable query string is `400`, a missing `Content-Type: application/json` is `415`, and a body that parses but does not match the declared shape is `422`. The `detail` field carries the extractor's own explanation.
 
 #### Error Source Distinction
 
@@ -742,7 +809,7 @@ Header may be stripped by intermediaries. For critical error handling, clients s
 | `gts.cf.core.oagw.route.v1~:{create;override;read;delete}` | Route CRUD |
 | `gts.cf.core.oagw.proxy.v1~:invoke` | Proxy requests |
 
-**Outbound** (OAGW → Upstream): Handled by auth plugins. Credentials resolved from `cred_store` via `secret_ref`.
+**Outbound** (OAGW → Upstream): Handled by auth plugins. Credentials resolved from `cred_store` through the plugin `config` keys (`key_ref`, or `client_id_ref` / `client_secret_ref`) — see §3.2 Secret Access Control.
 
 ### 3.4 Internal & External Dependencies
 
@@ -844,7 +911,7 @@ All resources use anonymous GTS identifiers in API path parameters:
 | Resolve Effective Configuration | Walk hierarchy, collect bindings, merge from root to child per sharing modes |
 | List Routes by Upstream | Filter by `upstream_id` with tenant scoping |
 | Track Plugin Usage | Scan `oagw_upstream_plugin`, `oagw_route_plugin`, and `auth_plugin_uuid` columns for references |
-| Delete Garbage-Collected Plugins | Delete plugin rows where `gc_eligible_at` is in the past |
+| Delete Unlinked Plugin | Single-row delete guarded by the reference scan — a referenced plugin is rejected with `409 PluginInUse`. `oagw_plugin.gc_eligible_at` exists as a column but no job consumes it, so plugin GC is dormant (see §3.2 Plugin Lifecycle Management) |
 
 ## 4. Additional Context
 
@@ -856,7 +923,7 @@ Config caching (in-memory caching of effective upstream/route configuration to a
 
 ### 4.2 Metrics and Observability
 
-Prometheus metrics at `/metrics` (admin-only):
+Metrics are emitted as OpenTelemetry instruments (`src/infra/metrics.rs`, meter `cf-gears-oagw`) and exported over **OTLP push** by the platform's meter provider. The gear exposes **no** `/metrics` scrape endpoint: pull-based collection is not implemented, so a Prometheus scrape of this gear returns nothing. Prometheus-compatible series are produced by the collector that receives the OTLP stream, which translates the OTel instruments below (name-preserving, so the documented series names hold at the collector).
 
 - `oagw_requests_total{host, http.request.method, http.route, http.response.status_code}` — counter (label keys follow OTel HTTP semantic conventions; numeric status; method normalized to a standard verb or `_OTHER`; aligned with the inbound API Gateway)
 - `oagw_request_duration_seconds{host, http.route, phase}` — histogram
@@ -877,7 +944,8 @@ Prometheus metrics at `/metrics` (admin-only):
 
 **Upstream Health Metrics**:
 - `oagw_upstream_available{host, endpoint}` — gauge (0=down, 1=up)
-- `oagw_upstream_connections{host, state}` — gauge (state: `idle`, `active`, `max`)
+
+`oagw_upstream_connections{host, state}` from an earlier revision of this document is **not implemented** — the connection pool does not expose its state to the metrics layer. It is recorded in `DEVIATIONS.md`.
 
 Cardinality management: no tenant labels; `http.route` is the normalized route match pattern, not the raw request path; `http.request.method` is normalized to a standard verb or `_OTHER`; `http.response.status_code` is the numeric upstream status (OTel HTTP semconv). Status-class queries (`5xx` rate, etc.) are expressed at query time via regex on the numeric code. Label-key vocabulary matches the inbound API Gateway so both gateways share dashboards. `host` remains as an OAGW-specific label carrying the upstream alias.
 
@@ -925,13 +993,15 @@ Structured JSON logs to stdout, ingested by centralized logging system (e.g., EL
 ### 4.7 Future Developments
 
 1. [Core] Circuit breaker: config and fallback strategies
-2. [Core] Concurrency control
+2. [Core] Plugin garbage collection — `oagw_plugin.gc_eligible_at` is already persisted; a background sweeper is required before it has any effect
+3. [Core] Concurrency control
 3. [Core] Backpressure queueing — In-flight limits, queueing strategies, graceful degradation under load
 4. [Plugin] Starlark standard library extensions (e.g., HTTP client, caching), with security considerations. Auth plugins may need network I/O.
 5. [Security] TLS certificate pinning — Pin specific certificates/public keys for critical upstreams to prevent MITM attacks
 6. [Security] mTLS support — Mutual TLS for client certificate authentication with upstream services
 7. [Protocol] gRPC support — HTTP/2 multiplexing with content-type detection — **Requires prototype**
 8. [Deployment] Registry-only mode — All upstreams, routes, and plugin configs sourced exclusively from type registry (no management API CRUD). The `post_init()` provisioning path already materializes registry entities through the full domain validation pipeline. A registry-only mode would require: (a) config flag to disable or make CRUD endpoints read-only, (b) soft-fail on invalid entities (skip with warning instead of blocking startup), (c) a validation feedback mechanism so config authors can discover rejected entities — e.g., status writeback on GTS entities or a dedicated provisioning status endpoint. This is a platform-level concern: any gear consuming GTS entities for configuration faces the same write-time validation gap.
+9. [Observability] Pull-based metrics — a Prometheus scrape endpoint would have to register its own exporter; today only the OTLP push path exists
 
 ## 5. Traceability
 
@@ -949,7 +1019,7 @@ Structured JSON logs to stdout, ingested by centralized logging system (e.g., EL
 | `cpt-cf-oagw-fr-streaming` | `cpt-cf-oagw-interface-api` — SSE, WebSocket, gRPC streaming |
 | `cpt-cf-oagw-nfr-low-latency` | `cpt-cf-oagw-tech-dependencies` — In-memory rate limiters |
 | `cpt-cf-oagw-nfr-multi-tenancy` | `cpt-cf-oagw-db-schema` — All tables tenant-scoped via secure ORM |
-| `cpt-cf-oagw-nfr-observability` | `cpt-cf-oagw-interface-api` — Prometheus metrics, structured logging |
+| `cpt-cf-oagw-nfr-observability` | `cpt-cf-oagw-interface-api` — OpenTelemetry metrics over OTLP push, structured logging |
 | `cpt-cf-oagw-nfr-credential-isolation` | `cpt-cf-oagw-principle-cred-isolation` — `cred_store` secret references |
 
 ### 5.2 ADR Coverage
@@ -963,3 +1033,5 @@ Structured JSON logs to stdout, ingested by centralized logging system (e.g., EL
 | [0005 Control Plane Caching](./ADR/0005-data-plane-caching.md) | `cpt-cf-oagw-tech-dependencies` |
 | [0006 State Management](./ADR/0006-state-management.md) | `cpt-cf-oagw-component-model` |
 | [0007 Error Source Distinction](./ADR/0007-error-source-distinction.md) | `cpt-cf-oagw-interface-api` |
+| [0008 OAuth2 Client Credentials](./ADR/0008-oauth2-client-credentials-auth-plugin.md) | `cpt-cf-oagw-component-model` — auth plugins and the credential cache |
+| [0009 Required Header Guard](./ADR/0009-required-headers-guard-plugin.md) | `cpt-cf-oagw-component-model` — guard plugin rejection semantics |

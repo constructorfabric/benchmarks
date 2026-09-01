@@ -9,6 +9,12 @@
       "readOnly": true,
       "description": "System-generated unique identifier."
     },
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid",
+      "readOnly": true,
+      "description": "Owning tenant. Immutable; assigned by the gateway from the caller's security context."
+    },
     "enabled": {
       "type": "boolean",
       "default": true,
@@ -116,17 +122,26 @@
             "oneOf": [
               {
                 "type": "string",
-                "format": "gts-identifier",
-                "description": "Builtin plugin GTS identifier"
+                "description": "Plugin reference: a full GTS identifier for a built-in plugin, or a UUID for a tenant-defined plugin."
               },
               {
-                "type": "string",
-                "format": "uuid",
-                "description": "Custom plugin UUID"
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "plugin_ref": {
+                    "type": "string",
+                    "description": "Plugin reference: a full GTS identifier for a built-in plugin, or a UUID for a tenant-defined plugin."
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "Plugin configuration, keyed by plugin-specific JSON fields."
+                  }
+                },
+                "required": [ "plugin_ref" ]
               }
             ]
           },
-          "description": "List of plugins applied to this upstream service. Builtin plugins referenced by GTS ID, custom plugins by UUID."
+          "description": "Ordered plugin bindings applied to this upstream service. Each entry is either a bare plugin reference or an object carrying the reference plus its configuration; both shapes are accepted on the wire and the bare form carries an empty configuration."
         }
       }
     },

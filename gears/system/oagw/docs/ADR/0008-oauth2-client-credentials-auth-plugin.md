@@ -48,10 +48,10 @@ Current built-in auth plugins (`ApiKeyAuthPlugin`, `NoopAuthPlugin`) handle stat
 
 **Existing infrastructure**:
 
-- `AuthPlugin` trait in `oagw/src/domain/plugin/mod.rs` — `authenticate(&self, ctx: &mut AuthContext)` interface
+- `AuthPlugin` trait in `oagw/src/domain/plugin/mod.rs` — `authenticate(&self, ctx, security_context, config, parts)` interface
 - `CredStoreClientV1` in `credstore-sdk` — resolves `cred://` references to secret values
-- `toolkit_auth::oauth2::fetch_token` in `libs/toolkit-auth` — one-shot token exchange returning bearer + `expires_in`, OIDC Discovery, `Basic`/`Form` client auth (no background watcher)
-- GTS identifiers already reserved in `gts_helpers.rs`:
+- `toolkit_auth::oauth2` in `libs/toolkit-auth` — one-shot token exchange returning bearer + `expires_in`, OIDC Discovery, `Basic`/`Form` client auth (no background watcher)
+- GTS identifiers already reserved in `oagw/src/domain/gts.rs`:
   - `gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.oauth2_client_cred.v1` (Form)
   - `gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.oauth2_client_cred_basic.v1` (Basic)
 
@@ -88,7 +88,7 @@ Caching is an internal concern of the OAuth2 CC plugin — not a generic decorat
 | `gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.oauth2_client_cred.v1` | `Form` (credentials in request body) |
 | `gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.oauth2_client_cred_basic.v1` | `Basic` (credentials in `Authorization` header) |
 
-Both registered in `AuthPluginRegistry::with_builtins`. Only `auth_method` differs; both share the same cache configuration.
+Both registered in `BuiltinPlugins::with_builtins`. Only `auth_method` differs; both share the same cache configuration.
 
 ### Plugin Config (ctx.config keys)
 
@@ -107,20 +107,22 @@ Both registered in `AuthPluginRegistry::with_builtins`. Only `auth_method` diffe
 | `token_cache_ttl_secs` | 300 (5 min) | Ceiling for cached access token TTL. The actual TTL is `min(config_ttl, expires_in − 30s safety margin)`, where `expires_in` is reported by the IdP. Kept short because there is no cache-invalidation mechanism yet — a revoked or rotated token remains cached until expiry. |
 | `token_cache_capacity` | 10,000 | Maximum entries in the token cache. |
 
-These are bundled into a `TokenCacheConfig` struct and threaded through `DataPlaneServiceImpl::new()` → `AuthPluginRegistry::with_builtins()` → plugin constructors.
+These keys exist in `OagwConfig` (`oagw/src/config.rs`, defaults from `TOKEN_CACHE_TTL_SECS` / `TOKEN_CACHE_CAPACITY`) and are reachable through `OagwConfig::token_cache_ttl_secs()` / `token_cache_capacity()`. **The plugin layer does not consume them yet**: `OAuth2ClientCredAuthPlugin` reads the build-time constants `DEFAULT_TOKEN_CACHE_TTL_SECS` / `DEFAULT_TOKEN_CACHE_CAPACITY` instead, because `BuiltinPlugins::with_builtins(credstore)` takes no configuration argument and the `OagwConfig` → `DataPlaneServiceImpl` plumbing is not wired. Recorded in `DEVIATIONS.md`; the values are identical, so behaviour matches the table above.
 
 ### Cache Key Design
 
 `TinyUfo` (used internally by `pingora-memory-cache`) hashes keys to `u64` and does **not** use `Eq` for collision resolution. To avoid silent collisions, the cache uses a `String` key encoding all identity components:
 
 ```rust
-fn build_cache_key(ctx: &AuthContext, auth_method: ClientAuthMethod) -> String {
+// oagw/src/infra/plugin/oauth2_cc_auth.rs
+
+fn cache_key(&self, security_context: &SecurityContext, config: &serde_json::Value) -> String {
     format!(
-        "{}:{}:{}:{}",
-        ctx.security_context.subject_tenant_id(),
-        ctx.security_context.subject_id(),
-        auth_method_tag(auth_method),
-        hash_config(&ctx.config),
+        "{}:{}:{}:{:016x}",
+        security_context.subject_tenant_id(),
+        security_context.subject_id(),
+        self.auth_method.tag(),
+        config_hash(config),
     )
 }
 ```
@@ -128,8 +130,8 @@ fn build_cache_key(ctx: &AuthContext, auth_method: ClientAuthMethod) -> String {
 The key includes:
 - `subject_tenant_id` — cross-tenant isolation
 - `subject_id` — cross-subject isolation for CredStore `private` sharing mode
-- `auth_method` — prevents collisions if Form and Basic plugins share identical config
-- `config_hash` — sorted deterministic hash of all plugin config key/value pairs; different upstream configs (e.g. different scopes) get different entries
+- `auth_method.tag()` — `"form"` / `"basic"`, prevents collisions if both variants share identical config
+- `config_hash` — FNV-1a over `config.to_string()`; `serde_json::Value` maps are `BTreeMap`-backed, so the rendering is key-sorted and stable, and different upstream configs (e.g. different scopes) get different entries
 
 ### Hash-Collision Safety via CachedToken Wrapper
 
@@ -148,78 +150,89 @@ On cache hit, `entry.key == lookup_key` is verified before using the token. A mi
 ### Authentication Flow
 
 ```text
-authenticate(ctx) called
-  ├─ Parse OAuth2PluginConfig from ctx.config
-  ├─ build_cache_key(ctx, auth_method)
+authenticate(security_context, config, parts) called
+  ├─ key = cache_key(security_context, config)
   ├─ cache.get(&key) → CachedToken?
-  │   ├─ Hit + key matches → inject cached token, return Ok(())
+  │   ├─ Hit + entry.key == key → inject token, return Ok(())
   │   └─ Miss (or key mismatch) → continue
   ├─ resolve_secret(client_id_ref)     → CredStore lookup
   ├─ resolve_secret(client_secret_ref) → CredStore lookup
   ├─ fetch_token(OAuthClientConfig)    → FetchedToken { bearer, expires_in }
-  ├─ ttl = min(config_ttl, expires_in − 30s safety margin)
-  ├─ cache.put(&key, CachedToken { key, token }, ttl)
-  ├─ Inject Authorization: Bearer <token> into ctx.headers
+  ├─ ttl = min(configured_ttl, expires_in − 30s safety margin), floored at 1s
+  ├─ ttl is Some → cache.put(&key, CachedToken { key, token }, ttl)
+  ├─ Inject Authorization: Bearer <token> into parts.headers
   └─ Return Ok(())
 ```
 
-Failed token fetches are **not** cached — the next request for the same key retries the IdP.
+Failed token fetches are **not** cached — the next request for the same key retries the IdP. A token whose `expires_in` leaves nothing after the 30 s margin is **not cached at all**: `pingora-memory-cache` treats a `None` expiry as *never*, so `cache_ttl_for` returns `None` rather than storing it forever.
 
 ### Plugin Implementation
 
 ```rust
+// oagw/src/infra/plugin/oauth2_cc_auth.rs
+
 use pingora_memory_cache::MemoryCache;
 
+/// Default cache ceiling (ADR-0008, `token_cache_ttl_secs`).
+pub const DEFAULT_TOKEN_CACHE_TTL_SECS: u64 = 300;
+/// Default cache capacity (ADR-0008, `token_cache_capacity`).
+pub const DEFAULT_TOKEN_CACHE_CAPACITY: usize = 10_000;
+
 pub struct OAuth2ClientCredAuthPlugin {
-    credstore: Arc<dyn CredStoreClientV1>,
-    auth_method: ClientAuthMethod,
-    http_config: Option<toolkit_http::HttpClientConfig>,
-    cache: MemoryCache<String, CachedToken>,
+    secrets: Arc<SecretResolver>,
+    auth_method: ClientAuth,
+    cache: Arc<MemoryCache<String, CachedToken>>,
     cache_ttl: Duration,
 }
 
 impl OAuth2ClientCredAuthPlugin {
-    pub fn new(
-        credstore: Arc<dyn CredStoreClientV1>,
-        auth_method: ClientAuthMethod,
-        cache_ttl: Duration,
-        cache_capacity: usize,
-    ) -> Self {
+    pub fn new(secrets: Arc<SecretResolver>, auth_method: ClientAuth) -> Self {
         Self {
-            credstore,
+            secrets,
             auth_method,
-            http_config: None,
-            cache: MemoryCache::new(cache_capacity),
-            cache_ttl,
+            cache: Arc::new(MemoryCache::new(DEFAULT_TOKEN_CACHE_CAPACITY)),
+            cache_ttl: Duration::from_secs(DEFAULT_TOKEN_CACHE_TTL_SECS),
         }
     }
+
+    pub fn form(secrets: Arc<SecretResolver>) -> Self {
+        Self::new(secrets, ClientAuth::Form)
+    }
+
+    pub fn basic(secrets: Arc<SecretResolver>) -> Self {
+        Self::new(secrets, ClientAuth::Basic)
+    }
+
+    /// Overrides the build-time cache defaults (test seam).
+    pub fn with_cache(self, ttl: Duration, capacity: usize) -> Self { /* ... */ }
 }
 ```
+
+The credential store is reached through [`SecretResolver`] (`oagw/src/infra/plugin/mod.rs`), not held directly: the resolver is shared with `ApiKeyAuthPlugin` and fails closed (500 `SecretNotFound`) when the `credstore` gear is not linked into the deployment.
 
 ### Registry Integration
 
 ```rust
-impl AuthPluginRegistry {
-    pub fn with_builtins(
-        credstore: Arc<dyn CredStoreClientV1>,
-        token_http_config: Option<toolkit_http::HttpClientConfig>,
-        token_cache_config: TokenCacheConfig,
-    ) -> Self {
-        // ... apikey and noop plugins unchanged ...
+// oagw/src/infra/plugin/mod.rs
 
-        let form_plugin = OAuth2ClientCredAuthPlugin::new(
-            credstore.clone(),
-            ClientAuthMethod::Form,
-            token_cache_config.ttl,
-            token_cache_config.capacity,
-        );
-        let basic_plugin = OAuth2ClientCredAuthPlugin::new(
-            credstore.clone(),
-            ClientAuthMethod::Basic,
-            token_cache_config.ttl,
-            token_cache_config.capacity,
-        );
-        // ... register both ...
+impl BuiltinPlugins {
+    pub fn with_builtins(credstore: Arc<dyn credstore_sdk::CredStoreClientV1>) -> Self {
+        Self::with_builtins_optional(Some(credstore))
+    }
+
+    pub fn with_builtins_optional(
+        credstore: Option<Arc<dyn credstore_sdk::CredStoreClientV1>>,
+    ) -> Self {
+        let resolver = Arc::new(SecretResolver::new(credstore));
+        Self {
+            // ... noop and apikey plugins unchanged ...
+            auth: Arc::new(AuthPluginRegistry::new(vec![
+                Arc::new(OAuth2ClientCredAuthPlugin::form(resolver.clone())),
+                Arc::new(OAuth2ClientCredAuthPlugin::basic(resolver)),
+                // ...
+            ])),
+            // ...
+        }
     }
 }
 ```
@@ -309,7 +322,7 @@ This is an area of active design. The trait shape, the metadata returned, and th
 
 ### Confirmation
 
-Code review confirms: `OAuth2ClientCredAuthPlugin` implemented in `oagw/src/infra/plugin/oauth2_client_cred_auth.rs` using `pingora_memory_cache::MemoryCache<String, CachedToken>`, `toolkit_auth::oauth2::fetch_token`, and the `min(config_ttl, expires_in − 30s)` TTL rule. Both `Form` and `Basic` variants are registered in `AuthPluginRegistry::with_builtins` (`oagw/src/infra/plugin/registry.rs`) under `OAUTH2_CLIENT_CRED_AUTH_PLUGIN_ID` and `OAUTH2_CLIENT_CRED_BASIC_AUTH_PLUGIN_ID`.
+Code review confirms: `OAuth2ClientCredAuthPlugin` implemented in `oagw/src/infra/plugin/oauth2_cc_auth.rs` using `pingora_memory_cache::MemoryCache<String, CachedToken>`, `toolkit_auth::oauth2` token fetching, and the `min(configured_ttl, expires_in − 30s)` TTL rule (`cache_ttl_for`). Both `Form` and `Basic` variants are registered in `BuiltinPlugins::with_builtins_optional` (`oagw/src/infra/plugin/mod.rs`) under `AUTH_PLUGIN_OAUTH2_CC_INSTANCE` = `cf.core.oagw.oauth2_client_cred.v1` and `AUTH_PLUGIN_OAUTH2_CC_BASIC_INSTANCE` = `cf.core.oagw.oauth2_client_cred_basic.v1`. The cache defaults are the build-time constants `DEFAULT_TOKEN_CACHE_TTL_SECS` (300) and `DEFAULT_TOKEN_CACHE_CAPACITY` (10 000) in the same file; `OagwConfig` exposes the same values as `token_cache_ttl_secs` / `token_cache_capacity` but the plumbing into the plugin is not wired yet (see `DEVIATIONS.md`).
 
 ## Pros and Cons of the Options
 
@@ -362,6 +375,9 @@ Fetch a fresh token from the IdP on every proxied request.
 - [pingora-memory-cache](https://github.com/cloudflare/pingora/tree/main/pingora-memory-cache) — S3-FIFO + TinyLFU eviction, cache stampede protection
 - `libs/toolkit-auth` (`oauth2/config.rs`, `oauth2/source.rs`, `oauth2/token.rs`, `oauth2/fetch.rs`) — Token management library
 - `oagw/src/infra/plugin/apikey_auth.rs` — Reference `AuthPlugin` implementation
+- `oagw/src/infra/plugin/mod.rs` — `SecretResolver` and `BuiltinPlugins::with_builtins{,_optional}`
+- `oagw/src/domain/gts.rs` — `AUTH_PLUGIN_OAUTH2_CC{,_BASIC}_INSTANCE` identifiers
+- `oagw/src/config.rs` — `OagwConfig::token_cache_ttl_secs` / `token_cache_capacity` (ADR-0008 defaults)
 
 ## Traceability
 

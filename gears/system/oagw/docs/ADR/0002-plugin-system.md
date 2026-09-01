@@ -161,29 +161,42 @@ impl AuthPlugin for OAuth2PkceAuthPlugin {
 Data Plane loads and registers all plugins during initialization:
 
 ```rust
-pub struct ControlPlane {
-    auth_plugins: HashMap<String, Arc<dyn AuthPlugin>>,
-    guard_plugins: HashMap<String, Arc<dyn GuardPlugin>>,
-    transform_plugins: HashMap<String, Arc<dyn TransformPlugin>>,
+// oagw/src/infra/plugin/mod.rs
+
+pub struct BuiltinPlugins {
+    pub auth: Arc<AuthPluginRegistry>,
+    pub guards: Arc<GuardPluginRegistry>,
+    pub transforms: Arc<TransformPluginRegistry>,
 }
 
-impl ControlPlane {
-    pub fn new(external_plugins: Vec<Box<dyn AuthPlugin>>) -> Self {
-        let mut auth_plugins = HashMap::new();
+impl BuiltinPlugins {
+    pub fn with_builtins(credstore: Arc<dyn credstore_sdk::CredStoreClientV1>) -> Self {
+        Self::with_builtins_optional(Some(credstore))
+    }
 
-        // Register built-in plugins
-        auth_plugins.insert("apikey".into(), Arc::new(ApiKeyAuthPlugin));
-        auth_plugins.insert("basic".into(), Arc::new(BasicAuthPlugin));
-
-        // Register external plugins from toolkit
-        for plugin in external_plugins {
-            auth_plugins.insert(plugin.id().to_string(), Arc::from(plugin));
+    pub fn with_builtins_optional(
+        credstore: Option<Arc<dyn credstore_sdk::CredStoreClientV1>>,
+    ) -> Self {
+        let resolver = Arc::new(SecretResolver::new(credstore));
+        Self {
+            auth: Arc::new(AuthPluginRegistry::new(vec![
+                Arc::new(NoopAuthPlugin),
+                Arc::new(ApiKeyAuthPlugin::new(resolver.clone())),
+                Arc::new(OAuth2ClientCredAuthPlugin::form(resolver.clone())),
+                Arc::new(OAuth2ClientCredAuthPlugin::basic(resolver)),
+            ])),
+            guards: Arc::new(GuardPluginRegistry::new(vec![
+                Arc::new(RequiredHeadersGuardPlugin),
+            ])),
+            transforms: Arc::new(TransformPluginRegistry::new(vec![
+                Arc::new(RequestIdTransformPlugin),
+            ])),
         }
-
-        Self { auth_plugins, /* ... */ }
     }
 }
 ```
+
+`AuthPluginRegistry::new` keys each plugin by `AuthPlugin::id()` — the *instance* part of its GTS identifier — and `resolve(plugin_ref)` strips the GTS prefix before looking it up, so a binding may carry either the full `gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1` identifier or the bare instance (`apikey`).
 
 ### Consequences
 

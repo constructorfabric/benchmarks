@@ -9,6 +9,12 @@
       "readOnly": true,
       "description": "System-generated unique identifier."
     },
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid",
+      "readOnly": true,
+      "description": "Owning tenant. Immutable; assigned by the gateway from the caller's security context."
+    },
     "tags": {
       "type": "array",
       "items": {
@@ -35,6 +41,17 @@
         { "required": [ "grpc" ] }
       ]
     },
+    "priority": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "description": "Sort priority for routes whose HTTP path prefix has equal length; the higher value wins."
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this route participates in request resolution. Disabled routes are skipped during route matching."
+    },
     "plugins": {
       "type": "object",
       "properties": {
@@ -47,17 +64,40 @@
         "items": {
           "type": "array",
           "items": {
-            "type": "string",
-            "format": "gts-identifier"
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Plugin reference: a full GTS identifier for a built-in plugin, or a UUID for a tenant-defined plugin."
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "plugin_ref": {
+                    "type": "string",
+                    "description": "Plugin reference: a full GTS identifier for a built-in plugin, or a UUID for a tenant-defined plugin."
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "Plugin configuration, keyed by plugin-specific JSON fields."
+                  }
+                },
+                "required": [ "plugin_ref" ]
+              }
+            ]
           },
           "default": [ ],
-          "description": "List of plugins applied to this route."
+          "description": "Ordered plugin bindings applied to this route, appended after the upstream plugin chain. Each entry is either a bare plugin reference or an object carrying the reference plus its configuration."
         }
       }
     },
     "rate_limit": {
       "$ref": "#/definitions/rate_limit",
       "description": "Rate limiting configuration for the route."
+    },
+    "cors": {
+      "$ref": "#/definitions/cors",
+      "description": "CORS configuration for the route."
     }
   },
   "required": [ "upstream_id", "match" ],
