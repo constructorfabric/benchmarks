@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+readme = "README.md"
 keywords = ["constructorfabric", "cf-gears"]
 categories = ["web-programming"]
 metadata.docs.rs.all-features = true
@@ -33,6 +34,7 @@ test-utils = [
 ]
 
 [dependencies]
+oagw-sdk = { path = "../oagw-sdk", package="cf-gears-oagw-sdk", version = "0.5.8", features = ["axum"] }
 toolkit = { workspace = true }
 toolkit-auth = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
