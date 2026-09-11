@@ -76,9 +76,11 @@ form_urlencoded = "1"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
 tokio = { workspace = true, features = ["time"] }
+tokio-util = { workspace = true }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
-hyper-util = { workspace = true }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
+http-body-util = { workspace = true }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
@@ -100,8 +102,8 @@ opentelemetry_sdk = { workspace = true, features = ["testing"] }
 types-registry-sdk = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "net", "test-util"] }
 tower = { workspace = true, features = ["util"] }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true, features = ["tokio"] }
 http-body-util = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
