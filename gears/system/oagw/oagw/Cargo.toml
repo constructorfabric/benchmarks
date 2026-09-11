@@ -24,8 +24,6 @@ test-utils = [
     "toolkit/bootstrap",
     "dep:async-stream",
     "dep:tower",
-    "dep:rustls",
-    "dep:rustls-pki-types",
     "dep:rcgen",
     "tokio/net",
     "tokio/sync",
@@ -75,21 +73,28 @@ mime = { workspace = true }
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "net", "io-util", "rt"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
-hyper-util = { workspace = true }
+hyper-util = { workspace = true, features = ["tokio"] }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
 pingora-load-balancing = { version = "0.8", features = ["rustls"] }
 pingora-http = { version = "0.8.1" }
 httparse = "1"
+# WebSocket relay: the upgrade is negotiated over the raw socket so the
+# client's `Sec-WebSocket-Key` and the upstream's `Sec-WebSocket-Accept`
+# are relayed verbatim.
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+rustls-native-certs = { workspace = true }
+http-body-util = { workspace = true }
+
 # test-utils optional deps
 async-stream = { workspace = true, optional = true }
 tower = { workspace = true, features = ["util"], optional = true }
-rustls = { workspace = true, optional = true }
-rustls-pki-types = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
 
 [dev-dependencies]
