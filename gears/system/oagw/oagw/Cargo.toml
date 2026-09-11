@@ -24,8 +24,6 @@ test-utils = [
     "toolkit/bootstrap",
     "dep:async-stream",
     "dep:tower",
-    "dep:rustls",
-    "dep:rustls-pki-types",
     "dep:rcgen",
     "tokio/net",
     "tokio/sync",
@@ -44,6 +42,7 @@ inventory = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 http = { workspace = true }
+http-body-util = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
@@ -75,7 +74,9 @@ mime = { workspace = true }
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "net", "sync", "rt", "io-util", "macros"] }
+tokio-rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
@@ -86,10 +87,11 @@ pingora-load-balancing = { version = "0.8", features = ["rustls"] }
 pingora-http = { version = "0.8.1" }
 httparse = "1"
 # test-utils optional deps
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+# test-utils optional deps
 async-stream = { workspace = true, optional = true }
 tower = { workspace = true, features = ["util"], optional = true }
-rustls = { workspace = true, optional = true }
-rustls-pki-types = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
 
 [dev-dependencies]
