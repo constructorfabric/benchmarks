@@ -42,7 +42,9 @@ toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 inventory = { workspace = true }
 async-trait = { workspace = true }
-axum = { workspace = true }
+# `ws` is required by the WebSocket data plane (upgrades are proxied in production,
+# not only in tests); it pulls in tungstenite, already present in Cargo.lock.
+axum = { workspace = true, features = ["ws"] }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -79,6 +81,9 @@ tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+# WebSocket client side of the proxy (already resolved at 0.29 in Cargo.lock).
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }

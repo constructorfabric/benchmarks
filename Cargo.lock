@@ -1598,6 +1598,7 @@ dependencies = [
  "tokio",
  "tokio-retry",
  "tokio-rustls",
+ "tokio-tungstenite",
  "tower",
  "tracing",
  "url",
