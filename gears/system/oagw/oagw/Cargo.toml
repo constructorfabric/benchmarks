@@ -80,6 +80,7 @@ tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 # Pingora proxy engine
+tokio-util = { workspace = true }
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
 pingora-load-balancing = { version = "0.8", features = ["rustls"] }
