@@ -72,6 +72,7 @@ psl = { workspace = true }
 thiserror = { workspace = true }
 mime = { workspace = true }
 # DP deps
+base64 = { workspace = true }
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
@@ -79,6 +80,8 @@ tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+http-body-util = { workspace = true }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
@@ -96,6 +99,9 @@ rcgen = { workspace = true, optional = true }
 cf-gears-oagw = { path = ".", features = ["test-utils"] }
 credstore-sdk = { workspace = true, features = ["test-util"] }
 toolkit = { workspace = true, features = ["bootstrap"] }
+# The cancellation token a `GearCtx` carries is the `tokio_util` type the
+# toolkit context is built on, needed to build one in the gear's own tests.
+tokio-util = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 types-registry-sdk = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "net", "test-util"] }
