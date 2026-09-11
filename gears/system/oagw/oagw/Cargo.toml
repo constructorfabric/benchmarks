@@ -15,6 +15,9 @@ metadata.docs.rs.all-features = true
 name = "oagw"
 path = "src/lib.rs"
 
+[lints]
+workspace = true
+
 [features]
 # FIPS-140-3: compile TLS deps with FIPS-approved cipher suites only
 fips = ["toolkit-http/fips"]
@@ -71,6 +74,7 @@ parking_lot = { workspace = true }
 psl = { workspace = true }
 thiserror = { workspace = true }
 mime = { workspace = true }
+humantime = { workspace = true }
 # DP deps
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
@@ -79,6 +83,8 @@ tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+http-body-util = { workspace = true }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
@@ -98,7 +104,7 @@ credstore-sdk = { workspace = true, features = ["test-util"] }
 toolkit = { workspace = true, features = ["bootstrap"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 types-registry-sdk = { workspace = true, features = ["test-util"] }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "net", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "net", "io-util", "test-util"] }
 tower = { workspace = true, features = ["util"] }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
