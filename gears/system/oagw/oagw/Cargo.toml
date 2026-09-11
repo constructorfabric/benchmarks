@@ -15,6 +15,9 @@ metadata.docs.rs.all-features = true
 name = "oagw"
 path = "src/lib.rs"
 
+[lints]
+workspace = true
+
 [features]
 # FIPS-140-3: compile TLS deps with FIPS-approved cipher suites only
 fips = ["toolkit-http/fips"]
@@ -39,6 +42,7 @@ toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
 toolkit-http = { workspace = true }
 toolkit-security = { workspace = true }
+secrecy = { workspace = true }
 toolkit-macros = { workspace = true }
 inventory = { workspace = true }
 async-trait = { workspace = true }
@@ -109,3 +113,5 @@ httpmock = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 futures-util = { workspace = true }
+tokio-util = { workspace = true }
+axum = { workspace = true, features = ["ws", "macros"] }
