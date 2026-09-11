@@ -79,6 +79,7 @@ tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
