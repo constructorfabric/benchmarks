@@ -11,6 +11,9 @@ keywords = ["constructorfabric", "cf-gears"]
 categories = ["web-programming"]
 metadata.docs.rs.all-features = true
 
+[lints]
+workspace = true
+
 [lib]
 name = "oagw"
 path = "src/lib.rs"
@@ -24,8 +27,6 @@ test-utils = [
     "toolkit/bootstrap",
     "dep:async-stream",
     "dep:tower",
-    "dep:rustls",
-    "dep:rustls-pki-types",
     "dep:rcgen",
     "tokio/net",
     "tokio/sync",
@@ -38,8 +39,11 @@ toolkit-auth = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
 toolkit-http = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
+toolkit-odata = { workspace = true }
 inventory = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
@@ -71,14 +75,24 @@ parking_lot = { workspace = true }
 psl = { workspace = true }
 thiserror = { workspace = true }
 mime = { workspace = true }
+time = { workspace = true }
+secrecy = { workspace = true }
+# WebSocket accept-key derivation for the upgrade bridge
+base64 = { workspace = true }
+sha1 = "0.10"
+# TLS to https/wss upstreams
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+tokio-rustls = { workspace = true }
+webpki-roots = "1.0"
 # DP deps
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
 tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["client", "client-legacy", "http1", "http2", "tokio"] }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
@@ -88,8 +102,6 @@ httparse = "1"
 # test-utils optional deps
 async-stream = { workspace = true, optional = true }
 tower = { workspace = true, features = ["util"], optional = true }
-rustls = { workspace = true, optional = true }
-rustls-pki-types = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -102,10 +114,15 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time
 tower = { workspace = true, features = ["util"] }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
-http-body-util = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 httpmock = { workspace = true }
+# A real WebSocket client: the upgrade tests dial a live server, and this is
+# already in the lockfile through axum's `ws` feature.
+tokio-tungstenite = "0.29"
+parking_lot = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 futures-util = { workspace = true }
