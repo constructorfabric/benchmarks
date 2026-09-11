@@ -11,6 +11,9 @@ keywords = ["constructorfabric", "cf-gears"]
 categories = ["web-programming"]
 metadata.docs.rs.all-features = true
 
+[lints]
+workspace = true
+
 [lib]
 name = "oagw"
 path = "src/lib.rs"
@@ -69,16 +72,19 @@ heck = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
 psl = { workspace = true }
+secrecy = { workspace = true }
 thiserror = { workspace = true }
 mime = { workspace = true }
 # DP deps
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "net", "io-util"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+http-body-util = { workspace = true }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
