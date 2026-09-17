@@ -69,7 +69,9 @@ impl DbManager {
         }
 
         // Build new Db
-        match self.build_for_gear(gear).await? {
+        // Pinned: with the full gear feature set the future exceeds clippy's
+        // `large_futures` threshold; boxing it changes nothing semantically.
+        match Box::pin(self.build_for_gear(gear)).await? {
             Some(db) => {
                 // Use entry API to handle race conditions properly
                 match self.cache.entry(gear.to_owned()) {

@@ -19,7 +19,8 @@ path = "src/lib.rs"
 # FIPS-140-3: compile TLS deps with FIPS-approved cipher suites only
 fips = ["toolkit-http/fips"]
 test-utils = [
-    "axum/ws",
+    # `axum/ws` is on the base dependency line since the streaming slice (S7):
+    # the data plane needs `WebSocketUpgrade` in production, not only in tests.
     "credstore-sdk/test-util",
     "toolkit/bootstrap",
     "dep:async-stream",
@@ -42,7 +43,11 @@ toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 inventory = { workspace = true }
 async-trait = { workspace = true }
-axum = { workspace = true }
+# `ws` is the WebSocket handshake of the proxy (PRD §5.4
+# `cpt-cf-oagw-fr-streaming`, DESIGN §3.3 "Proxy API", ADR-0007): the gateway
+# never terminates a WebSocket, it only signs the handshake and splices the two
+# connections.
+axum = { workspace = true, features = ["ws"] }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -74,11 +79,19 @@ mime = { workspace = true }
 # DP deps
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
+# OAuth2 token-cache key: a SHA-256 over the binding's canonical configuration
+# (ADR-0008 "Cache Key Design"). Both are workspace-table entries.
+sha2 = { workspace = true }
+hex = { workspace = true }
 futures-util = { workspace = true, features = ["sink"] }
 tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+# The upstream leg of a WebSocket splice (PRD §5.4 `cpt-cf-oagw-fr-streaming`,
+# ADR-0007). Already in the dependency graph through `axum/ws`; the same locked
+# 0.29 line.
+tokio-tungstenite = "0.29"
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
@@ -109,3 +122,5 @@ httpmock = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 futures-util = { workspace = true }
+# The WebSocket client of the streaming tests, over a real socket.
+tokio-tungstenite = "0.29"
