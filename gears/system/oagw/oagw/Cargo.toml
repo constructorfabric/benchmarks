@@ -24,8 +24,6 @@ test-utils = [
     "toolkit/bootstrap",
     "dep:async-stream",
     "dep:tower",
-    "dep:rustls",
-    "dep:rustls-pki-types",
     "dep:rcgen",
     "tokio/net",
     "tokio/sync",
@@ -79,6 +77,14 @@ tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+# Direct TLS transport for the data plane (transparent SSE / WebSocket proxying
+# needs an unbuffered connection, which toolkit-http cannot provide).
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+rustls-native-certs = { workspace = true }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
@@ -88,8 +94,6 @@ httparse = "1"
 # test-utils optional deps
 async-stream = { workspace = true, optional = true }
 tower = { workspace = true, features = ["util"], optional = true }
-rustls = { workspace = true, optional = true }
-rustls-pki-types = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
 
 [dev-dependencies]
