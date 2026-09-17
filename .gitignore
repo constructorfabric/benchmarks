@@ -66,3 +66,7 @@ testing/e2e/logs/
 # Cached checkout of the web docs site for `make docs-preview`
 .web-docs-preview/
 
+
+# Agent instruction files: never part of a benchmark solution, and code reviewers ingest them as guidelines
+CLAUDE.md
+AGENTS.md
