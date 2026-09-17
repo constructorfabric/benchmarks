@@ -15,6 +15,9 @@ metadata.docs.rs.all-features = true
 name = "oagw"
 path = "src/lib.rs"
 
+[lints]
+workspace = true
+
 [features]
 # FIPS-140-3: compile TLS deps with FIPS-approved cipher suites only
 fips = ["toolkit-http/fips"]
@@ -79,6 +82,8 @@ tokio = { workspace = true, features = ["time"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+http-body-util = { workspace = true }
 # Pingora proxy engine
 pingora-proxy = { version = "0.8", features = ["rustls"] }
 pingora-core = { version = "0.8", features = ["rustls"] }
@@ -94,6 +99,7 @@ rcgen = { workspace = true, optional = true }
 
 [dev-dependencies]
 cf-gears-oagw = { path = ".", features = ["test-utils"] }
+tokio-util = { workspace = true }
 credstore-sdk = { workspace = true, features = ["test-util"] }
 toolkit = { workspace = true, features = ["bootstrap"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
