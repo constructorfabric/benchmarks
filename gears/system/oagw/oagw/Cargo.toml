@@ -38,6 +38,7 @@ toolkit-auth = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
 toolkit-http = { workspace = true }
+toolkit-odata = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 inventory = { workspace = true }
@@ -52,7 +53,10 @@ arc-swap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
+bigdecimal = { workspace = true }
 gts = { workspace = true }
+schemars = { workspace = true }
+secrecy = { workspace = true }
 utoipa = { workspace = true }
 types-registry-sdk = { workspace = true }
 types-registry = { workspace = true }
