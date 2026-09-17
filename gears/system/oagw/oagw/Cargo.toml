@@ -32,6 +32,9 @@ test-utils = [
     "tokio/rt",
 ]
 
+[lints]
+workspace = true
+
 [dependencies]
 toolkit = { workspace = true }
 toolkit-auth = { workspace = true }
