@@ -15,6 +15,9 @@ metadata.docs.rs.all-features = true
 name = "oagw"
 path = "src/lib.rs"
 
+[lints]
+workspace = true
+
 [features]
 # FIPS-140-3: compile TLS deps with FIPS-approved cipher suites only
 fips = ["toolkit-http/fips"]
@@ -75,7 +78,7 @@ mime = { workspace = true }
 form_urlencoded = "1"
 pingora-memory-cache = "0.8"
 futures-util = { workspace = true, features = ["sink"] }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "macros", "rt"] }
 tokio-retry = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
