@@ -15,6 +15,11 @@ metadata.docs.rs.all-features = true
 name = "oagw"
 path = "src/lib.rs"
 
+[lints.rust]
+# `coverage_nightly` is a nightly-only cfg used to strip coverage-instrumented
+# items; declare it so stable builds don't warn as unexpected_cfgs.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
+
 [features]
 # FIPS-140-3: compile TLS deps with FIPS-approved cipher suites only
 fips = ["toolkit-http/fips"]
