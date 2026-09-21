@@ -1,328 +1,488 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "OAGW Upstream Service",
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string",
-      "format": "uuid",
-      "readOnly": true,
-      "description": "System-generated unique identifier."
-    },
-    "enabled": {
-      "type": "boolean",
-      "default": true,
-      "description": "Whether this upstream is enabled. When disabled, all requests to this upstream are rejected. If a parent tenant disables an upstream, it is disabled for all descendant tenants."
-    },
-    "alias": {
-      "type": "string",
-      "pattern": "^[a-z0-9]([a-z0-9.:-]*[a-z0-9])?$",
-      "description": "Human-readable routing identifier. Enforced by endpoint type: hostname-based endpoints auto-derive alias (user-provided alias matching the derived value is accepted as an idempotent no-op); IP-based or non-derivable endpoints require explicit alias. Derivation: single hostname with standard port (HTTP:80, HTTPS/WSS/WT/gRPC:443) → hostname; non-standard port → hostname:port; multiple hostnames with common suffix (≥2 labels) and standard port → common suffix (e.g., us.vendor.com + eu.vendor.com → vendor.com); multiple hostnames with common suffix and non-standard port → common suffix:port (e.g., us.vendor.com:8443 + eu.vendor.com:8443 → vendor.com:8443). Normalized to ASCII lowercase with trailing dots stripped."
-    },
-    "tags": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^[a-z0-9_-]+$"
+  "additionalProperties": false,
+  "definitions": {
+    "cors": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "allow_credentials": {
+            "const": true
+          }
+        },
+        "required": [
+          "allow_credentials"
+        ]
       },
-      "description": "Flat tags for categorization and discovery (e.g., openai, llm). Effective tags are additive across hierarchy (ancestor + descendant union); descendants can add, not remove inherited tags."
-    },
-    "server": {
-      "type": "object",
       "properties": {
-        "endpoints": {
-          "type": "array",
-          "minItems": 1,
+        "allow_credentials": {
+          "default": false,
+          "description": "Allow credentials (cookies, auth headers). Requires specific origins (not '*').",
+          "type": "boolean"
+        },
+        "allowed_methods": {
+          "default": [
+            "GET",
+            "POST"
+          ],
+          "description": "Allowed HTTP methods.",
           "items": {
-            "type": "object",
-            "properties": {
-              "scheme": {
-                "enum": [ "https", "wss", "wt", "grpc" ],
-                "type": "string",
-                "default": "https"
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "DELETE",
+              "PATCH",
+              "HEAD",
+              "OPTIONS"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_origins": {
+          "description": "Allowed origins. Use ['*'] for any origin (not recommended with credentials).",
+          "items": {
+            "oneOf": [
+              {
+                "const": "*"
               },
-              "host": {
-                "type": "string",
-                "anyOf": [
-                  { "format": "hostname" },
-                  { "format": "ipv4" },
-                  { "format": "ipv6" }
-                ],
-                "description": "Hostname or IP address of the upstream service."
-              },
-              "port": {
-                "type": "integer",
-                "default": 443,
-                "minimum": 1,
-                "maximum": 65535
+              {
+                "format": "uri"
               }
-            },
-            "additionalProperties": false,
-            "required": [ "scheme", "host" ]
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Enable CORS for this upstream.",
+          "type": "boolean"
+        },
+        "expose_headers": {
+          "default": [],
+          "description": "Headers exposed to browser (beyond CORS-safelisted headers).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sharing": {
+          "default": "private",
+          "description": "Sharing mode for CORS configuration.",
+          "enum": [
+            "private",
+            "inherit",
+            "enforce"
+          ],
+          "type": "string"
+        }
+      },
+      "then": {
+        "not": {
+          "properties": {
+            "allowed_origins": {
+              "contains": {
+                "const": "*"
+              }
+            }
           }
         }
       },
-      "additionalProperties": false,
-      "required": [ "endpoints" ]
+      "type": "object"
     },
-    "protocol": {
-      "type": "string",
-      "enum": [
-        "gts.cf.core.oagw.protocol.v1~cf.core.oagw.http.v1",
-        "gts.cf.core.oagw.protocol.v1~cf.core.oagw.grpc.v1"
+    "headers": {
+      "additionalProperties": false,
+      "properties": {
+        "request": {
+          "additionalProperties": false,
+          "properties": {
+            "add": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Headers to add (append, allow duplicates).",
+              "type": "object"
+            },
+            "passthrough": {
+              "default": "none",
+              "description": "Which inbound headers to forward.",
+              "enum": [
+                "none",
+                "allowlist",
+                "all"
+              ],
+              "type": "string"
+            },
+            "passthrough_allowlist": {
+              "description": "Headers to forward when passthrough is 'allowlist'.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "remove": {
+              "description": "Header names to remove from inbound request.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "set": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Headers to set (overwrite if exists).",
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "response": {
+          "additionalProperties": false,
+          "properties": {
+            "add": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Headers to add to response.",
+              "type": "object"
+            },
+            "remove": {
+              "description": "Headers to strip from upstream response.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "set": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Headers to set on response to client.",
+              "type": "object"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "plugin_binding": {
+      "description": "One plugin of the chain together with the configuration it runs under.",
+      "properties": {
+        "config": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "String key/value pairs defined by the plugin being bound.",
+          "type": "object"
+        },
+        "plugin_ref": {
+          "description": "Plugin being bound, as a full GTS identifier `gts.cf.core.oagw.{type}_plugin.v1~…`; see DESIGN's plugin identification model.",
+          "format": "gts-identifier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plugin_ref"
       ],
-      "format": "gts-identifier",
-      "description": "Protocol used to connect to the upstream service."
+      "type": "object"
+    },
+    "rate_limit": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "default": "token_bucket",
+          "description": "Rate limiting algorithm. token_bucket allows bursts; sliding_window prevents boundary bursts.",
+          "enum": [
+            "token_bucket",
+            "sliding_window"
+          ],
+          "type": "string"
+        },
+        "budget": {
+          "description": "Budget descendants draw on; the sum of the child allocations is bounded by it.",
+          "properties": {
+            "mode": {
+              "default": "unlimited",
+              "description": "unlimited: no budget tracking; allocated: parent allocates a fixed budget to children; shared: children share the parent's budget.",
+              "enum": [
+                "unlimited",
+                "allocated",
+                "shared"
+              ],
+              "type": "string"
+            },
+            "overcommit_ratio": {
+              "default": 1.0,
+              "description": "How far the sum of child allocations may exceed `total`.",
+              "maximum": 2.0,
+              "minimum": 1.0,
+              "type": "number"
+            },
+            "total": {
+              "description": "Total tokens the parent allocates across its descendants.",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "burst": {
+          "properties": {
+            "capacity": {
+              "description": "Maximum burst size (bucket capacity). Defaults to sustained.rate if not specified.",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "capacity"
+          ],
+          "type": "object"
+        },
+        "cost": {
+          "default": 1,
+          "description": "Tokens consumed per request. Useful for weighted endpoints.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "response_headers": {
+          "default": true,
+          "description": "Include the `X-RateLimit-*` headers in responses.",
+          "type": "boolean"
+        },
+        "scope": {
+          "default": "tenant",
+          "description": "Scope for rate limit counters.",
+          "enum": [
+            "global",
+            "tenant",
+            "user",
+            "ip",
+            "route"
+          ],
+          "type": "string"
+        },
+        "sharing": {
+          "default": "private",
+          "description": "Sharing mode for rate limits. enforce: descendants cannot exceed this limit.",
+          "enum": [
+            "private",
+            "inherit",
+            "enforce"
+          ],
+          "type": "string"
+        },
+        "strategy": {
+          "default": "reject",
+          "description": "Behavior when limit exceeded.",
+          "enum": [
+            "reject",
+            "queue",
+            "degrade"
+          ],
+          "type": "string"
+        },
+        "sustained": {
+          "properties": {
+            "rate": {
+              "description": "Tokens replenished per window.",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "window": {
+              "default": "second",
+              "description": "Time window for sustained rate.",
+              "enum": [
+                "second",
+                "minute",
+                "hour",
+                "day"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "rate"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "sustained"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "alias": {
+      "description": "Human-readable routing identifier. Enforced by endpoint type: hostname-based endpoints auto-derive alias (user-provided alias matching the derived value is accepted as an idempotent no-op); IP-based or non-derivable endpoints require explicit alias. Derivation: single hostname with standard port (HTTP:80, HTTPS/WSS/WT/gRPC:443) → hostname; non-standard port → hostname:port; multiple hostnames with common suffix (≥2 labels) and standard port → common suffix (e.g., us.vendor.com + eu.vendor.com → vendor.com); multiple hostnames with common suffix and non-standard port → common suffix:port (e.g., us.vendor.com:8443 + eu.vendor.com:8443 → vendor.com:8443). Normalized to ASCII lowercase with trailing dots stripped.",
+      "pattern": "^[a-z0-9]([a-z0-9.:-]*[a-z0-9])?$",
+      "type": "string"
     },
     "auth": {
-      "type": "object",
       "properties": {
+        "config": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Authentication plugin configuration.",
+          "type": "object"
+        },
+        "sharing": {
+          "default": "private",
+          "description": "Sharing mode for hierarchical configuration. private: not visible to descendants; inherit: descendants can override; enforce: descendants cannot override.",
+          "enum": [
+            "private",
+            "inherit",
+            "enforce"
+          ],
+          "type": "string"
+        },
         "type": {
-          "type": "string",
-          "format": "gts-identifier",
+          "description": "Authentication plugin type for the upstream service.",
           "examples": [
             "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
           ],
-          "description": "Authentication plugin type for the upstream service."
-        },
-        "sharing": {
-          "type": "string",
-          "enum": [ "private", "inherit", "enforce" ],
-          "default": "private",
-          "description": "Sharing mode for hierarchical configuration. private: not visible to descendants; inherit: descendants can override; enforce: descendants cannot override."
-        },
-        "config": {
-          "type": "object",
-          "description": "Authentication plugin configuration."
+          "format": "gts-identifier",
+          "type": "string"
         }
-      }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "cors": {
+      "$ref": "#/definitions/cors",
+      "description": "CORS configuration for the upstream."
+    },
+    "enabled": {
+      "default": true,
+      "description": "Whether this upstream is enabled. When disabled, all requests to this upstream are rejected. If a parent tenant disables an upstream, it is disabled for all descendant tenants.",
+      "type": "boolean"
     },
     "headers": {
       "$ref": "#/definitions/headers",
       "description": "Header transformation rules for requests/responses."
     },
+    "id": {
+      "description": "System-generated unique identifier.",
+      "format": "uuid",
+      "readOnly": true,
+      "type": "string"
+    },
     "plugins": {
-      "type": "object",
       "properties": {
-        "sharing": {
-          "type": "string",
-          "enum": [ "private", "inherit", "enforce" ],
-          "default": "private",
-          "description": "Sharing mode for plugin chain."
-        },
         "items": {
-          "type": "array",
+          "description": "Plugins bound to this upstream, applied in order within each plugin type; each item names the plugin by GTS identifier and carries its configuration.",
           "items": {
-            "oneOf": [
-              {
-                "type": "string",
-                "format": "gts-identifier",
-                "description": "Builtin plugin GTS identifier"
-              },
-              {
-                "type": "string",
-                "format": "uuid",
-                "description": "Custom plugin UUID"
-              }
-            ]
+            "$ref": "#/definitions/plugin_binding"
           },
-          "description": "List of plugins applied to this upstream service. Builtin plugins referenced by GTS ID, custom plugins by UUID."
+          "type": "array"
+        },
+        "sharing": {
+          "default": "private",
+          "description": "Sharing mode for plugin chain.",
+          "enum": [
+            "private",
+            "inherit",
+            "enforce"
+          ],
+          "type": "string"
         }
-      }
+      },
+      "type": "object"
+    },
+    "protocol": {
+      "description": "Protocol used to connect to the upstream service.",
+      "enum": [
+        "gts.cf.core.oagw.protocol.v1~cf.core.oagw.http.v1",
+        "gts.cf.core.oagw.protocol.v1~cf.core.oagw.grpc.v1"
+      ],
+      "format": "gts-identifier",
+      "type": "string"
     },
     "rate_limit": {
       "$ref": "#/definitions/rate_limit",
       "description": "Rate limiting configuration for the upstream."
     },
-    "cors": {
-      "$ref": "#/definitions/cors",
-      "description": "CORS configuration for the upstream."
+    "server": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoints": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "host": {
+                "anyOf": [
+                  {
+                    "format": "hostname"
+                  },
+                  {
+                    "format": "ipv4"
+                  },
+                  {
+                    "format": "ipv6"
+                  }
+                ],
+                "description": "Hostname or IP address of the upstream service.",
+                "type": "string"
+              },
+              "port": {
+                "default": 443,
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "scheme": {
+                "default": "https",
+                "enum": [
+                  "http",
+                  "https",
+                  "wss",
+                  "wt",
+                  "grpc"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "host"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "endpoints"
+      ],
+      "type": "object"
+    },
+    "tags": {
+      "description": "Flat tags for categorization and discovery (e.g., openai, llm). Effective tags are additive across hierarchy (ancestor + descendant union); descendants can add, not remove inherited tags.",
+      "items": {
+        "pattern": "^[a-z0-9_-]+$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tenant_id": {
+      "description": "Tenant that owns this resource. Set by the server.",
+      "format": "uuid",
+      "readOnly": true,
+      "type": "string"
     }
   },
-  "additionalProperties": false,
-  "required": [ "server", "protocol" ],
-  "definitions": {
-    "headers": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "request": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "set": {
-              "type": "object",
-              "additionalProperties": { "type": "string" },
-              "description": "Headers to set (overwrite if exists)."
-            },
-            "add": {
-              "type": "object",
-              "additionalProperties": { "type": "string" },
-              "description": "Headers to add (append, allow duplicates)."
-            },
-            "remove": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Header names to remove from inbound request."
-            },
-            "passthrough": {
-              "type": "string",
-              "enum": [ "none", "allowlist", "all" ],
-              "default": "none",
-              "description": "Which inbound headers to forward."
-            },
-            "passthrough_allowlist": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Headers to forward when passthrough is 'allowlist'."
-            }
-          }
-        },
-        "response": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "set": {
-              "type": "object",
-              "additionalProperties": { "type": "string" },
-              "description": "Headers to set on response to client."
-            },
-            "add": {
-              "type": "object",
-              "additionalProperties": { "type": "string" },
-              "description": "Headers to add to response."
-            },
-            "remove": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Headers to strip from upstream response."
-            }
-          }
-        }
-      }
-    },
-    "rate_limit": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "sharing": {
-          "type": "string",
-          "enum": [ "private", "inherit", "enforce" ],
-          "default": "private",
-          "description": "Sharing mode for rate limits. enforce: descendants cannot exceed this limit."
-        },
-        "algorithm": {
-          "type": "string",
-          "enum": [ "token_bucket", "sliding_window" ],
-          "default": "token_bucket",
-          "description": "Rate limiting algorithm. token_bucket allows bursts; sliding_window prevents boundary bursts."
-        },
-        "sustained": {
-          "type": "object",
-          "properties": {
-            "rate": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Tokens replenished per window."
-            },
-            "window": {
-              "type": "string",
-              "enum": [ "second", "minute", "hour", "day" ],
-              "default": "second",
-              "description": "Time window for sustained rate."
-            }
-          },
-          "required": [ "rate" ]
-        },
-        "burst": {
-          "type": "object",
-          "properties": {
-            "capacity": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Maximum burst size (bucket capacity). Defaults to sustained.rate if not specified."
-            }
-          }
-        },
-        "scope": {
-          "type": "string",
-          "enum": [ "global", "tenant", "user", "ip", "route" ],
-          "default": "tenant",
-          "description": "Scope for rate limit counters."
-        },
-        "strategy": {
-          "type": "string",
-          "enum": [ "reject", "queue", "degrade" ],
-          "default": "reject",
-          "description": "Behavior when limit exceeded."
-        },
-        "cost": {
-          "type": "integer",
-          "minimum": 1,
-          "default": 1,
-          "description": "Tokens consumed per request. Useful for weighted endpoints."
-        }
-      },
-      "required": [ "sustained" ]
-    },
-    "cors": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "sharing": {
-          "type": "string",
-          "enum": [ "private", "inherit", "enforce" ],
-          "default": "private",
-          "description": "Sharing mode for CORS configuration."
-        },
-        "enabled": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable CORS for this upstream."
-        },
-        "allowed_origins": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "oneOf": [
-              { "const": "*" },
-              { "format": "uri" }
-            ]
-          },
-          "description": "Allowed origins. Use ['*'] for any origin (not recommended with credentials)."
-        },
-        "allowed_methods": {
-          "type": "array",
-          "items": { "type": "string", "enum": [ "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS" ] },
-          "default": [ "GET", "POST" ],
-          "description": "Allowed HTTP methods."
-        },
-        "expose_headers": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [ ],
-          "description": "Headers exposed to browser (beyond CORS-safelisted headers)."
-        },
-        "allow_credentials": {
-          "type": "boolean",
-          "default": false,
-          "description": "Allow credentials (cookies, auth headers). Requires specific origins (not '*')."
-        }
-      },
-      "required": [ "enabled" ],
-      "if": {
-        "properties": {
-          "allow_credentials": { "const": true }
-        },
-        "required": [ "allow_credentials" ]
-      },
-      "then": {
-        "not": {
-          "properties": {
-            "allowed_origins": { "contains": { "const": "*" } }
-          }
-        }
-      }
-    }
-  }
+  "required": [
+    "server",
+    "protocol"
+  ],
+  "title": "OAGW Upstream Service",
+  "type": "object"
 }

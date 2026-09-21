@@ -1,241 +1,410 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "OAGW Route",
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string",
-      "format": "uuid",
-      "readOnly": true,
-      "description": "System-generated unique identifier."
-    },
-    "tags": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^[a-z0-9_-]+$"
-      },
-      "description": "Flat tags for categorization and discovery."
-    },
-    "upstream_id": {
-      "type": "string",
-      "format": "uuid",
-      "description": "Reference to the upstream service for this route."
-    },
-    "match": {
-      "type": "object",
-      "description": "Protocol-scoped inbound matching rules. Exactly one of {http|grpc} must be present.",
-      "additionalProperties": false,
-      "properties": {
-        "http": { "$ref": "#/definitions/http_match" },
-        "grpc": { "$ref": "#/definitions/grpc_match" }
-      },
-      "oneOf": [
-        { "required": [ "http" ] },
-        { "required": [ "grpc" ] }
-      ]
-    },
-    "plugins": {
-      "type": "object",
-      "properties": {
-        "sharing": {
-          "type": "string",
-          "enum": [ "private", "inherit", "enforce" ],
-          "default": "private",
-          "description": "Sharing mode for plugin chain."
-        },
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "format": "gts-identifier"
-          },
-          "default": [ ],
-          "description": "List of plugins applied to this route."
-        }
-      }
-    },
-    "rate_limit": {
-      "$ref": "#/definitions/rate_limit",
-      "description": "Rate limiting configuration for the route."
-    }
-  },
-  "required": [ "upstream_id", "match" ],
   "definitions": {
-    "http_match": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "HTTP match rules (used when the upstream protocol is HTTP).",
-      "properties": {
-        "methods": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "enum": [ "GET", "POST", "PUT", "DELETE", "PATCH" ]
-          },
-          "description": "HTTP methods supported by this route."
-        },
-        "path": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Path pattern for the route."
-        },
-        "query_allowlist": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [ ],
-          "description": "White-listed query parameters. If empty, allow none."
-        },
-        "path_suffix_mode": {
-          "type": "string",
-          "enum": [ "disabled", "append" ],
-          "default": "append",
-          "description": "How to treat /{path_suffix} from the proxy URL. 'disabled' rejects path_suffix usage; 'append' appends it to path."
-        }
-      },
-      "required": [ "methods", "path" ]
-    },
-    "grpc_match": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "gRPC match rules (used when the upstream protocol is gRPC).",
-      "properties": {
-        "service": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Fully qualified gRPC service name (e.g., 'foo.v1.UserService')."
-        },
-        "method": {
-          "type": "string",
-          "minLength": 1,
-          "description": "RPC method name (e.g., 'GetUser')."
-        }
-      },
-      "required": [ "service", "method" ]
-    },
-    "rate_limit": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "sharing": {
-          "type": "string",
-          "enum": [ "private", "inherit", "enforce" ],
-          "default": "private",
-          "description": "Sharing mode for rate limits. enforce: descendants cannot exceed this limit."
-        },
-        "algorithm": {
-          "type": "string",
-          "enum": [ "token_bucket", "sliding_window" ],
-          "default": "token_bucket",
-          "description": "Rate limiting algorithm. token_bucket allows bursts; sliding_window prevents boundary bursts."
-        },
-        "sustained": {
-          "type": "object",
-          "properties": {
-            "rate": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Tokens replenished per window."
-            },
-            "window": {
-              "type": "string",
-              "enum": [ "second", "minute", "hour", "day" ],
-              "default": "second",
-              "description": "Time window for sustained rate."
-            }
-          },
-          "required": [ "rate" ]
-        },
-        "burst": {
-          "type": "object",
-          "properties": {
-            "capacity": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Maximum burst size (bucket capacity). Defaults to sustained.rate if not specified."
-            }
-          }
-        },
-        "scope": {
-          "type": "string",
-          "enum": [ "global", "tenant", "user", "ip", "route" ],
-          "default": "tenant",
-          "description": "Scope for rate limit counters."
-        },
-        "strategy": {
-          "type": "string",
-          "enum": [ "reject", "queue", "degrade" ],
-          "default": "reject",
-          "description": "Behavior when limit exceeded."
-        },
-        "cost": {
-          "type": "integer",
-          "minimum": 1,
-          "default": 1,
-          "description": "Tokens consumed per request. Useful for weighted endpoints."
-        }
-      },
-      "required": [ "sustained" ]
-    },
     "cors": {
-      "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "sharing": {
-          "type": "string",
-          "enum": [ "private", "inherit", "enforce" ],
-          "default": "private",
-          "description": "Sharing mode for CORS configuration."
-        },
-        "enabled": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable CORS for this route."
-        },
-        "allowed_origins": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "oneOf": [
-              { "const": "*" },
-              { "format": "uri" }
-            ]
-          },
-          "description": "Allowed origins. Use ['*'] for any origin (not recommended with credentials)."
-        },
-        "allowed_methods": {
-          "type": "array",
-          "items": { "type": "string", "enum": [ "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS" ] },
-          "default": [ "GET", "POST" ],
-          "description": "Allowed HTTP methods."
-        },
-        "expose_headers": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [ ],
-          "description": "Headers exposed to browser (beyond CORS-safelisted headers)."
-        },
-        "allow_credentials": {
-          "type": "boolean",
-          "default": false,
-          "description": "Allow credentials (cookies, auth headers). Requires specific origins (not '*')."
-        }
-      },
-      "required": [ "enabled" ],
       "if": {
         "properties": {
-          "allow_credentials": { "const": true }
+          "allow_credentials": {
+            "const": true
+          }
         },
-        "required": [ "allow_credentials" ]
+        "required": [
+          "allow_credentials"
+        ]
+      },
+      "properties": {
+        "allow_credentials": {
+          "default": false,
+          "description": "Allow credentials (cookies, auth headers). Requires specific origins (not '*').",
+          "type": "boolean"
+        },
+        "allowed_methods": {
+          "default": [
+            "GET",
+            "POST"
+          ],
+          "description": "Allowed HTTP methods.",
+          "items": {
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "DELETE",
+              "PATCH",
+              "HEAD",
+              "OPTIONS"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_origins": {
+          "description": "Allowed origins. Use ['*'] for any origin (not recommended with credentials).",
+          "items": {
+            "oneOf": [
+              {
+                "const": "*"
+              },
+              {
+                "format": "uri"
+              }
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Enable CORS for this route.",
+          "type": "boolean"
+        },
+        "expose_headers": {
+          "default": [],
+          "description": "Headers exposed to browser (beyond CORS-safelisted headers).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sharing": {
+          "default": "private",
+          "description": "Sharing mode for CORS configuration.",
+          "enum": [
+            "private",
+            "inherit",
+            "enforce"
+          ],
+          "type": "string"
+        }
       },
       "then": {
         "not": {
           "properties": {
-            "allowed_origins": { "contains": { "const": "*" } }
+            "allowed_origins": {
+              "contains": {
+                "const": "*"
+              }
+            }
           }
         }
-      }
+      },
+      "type": "object"
+    },
+    "grpc_match": {
+      "additionalProperties": false,
+      "description": "gRPC match rules (used when the upstream protocol is gRPC).",
+      "properties": {
+        "method": {
+          "description": "RPC method name (e.g., 'GetUser').",
+          "minLength": 1,
+          "type": "string"
+        },
+        "service": {
+          "description": "Fully qualified gRPC service name (e.g., 'foo.v1.UserService').",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "service",
+        "method"
+      ],
+      "type": "object"
+    },
+    "http_match": {
+      "additionalProperties": false,
+      "description": "HTTP match rules (used when the upstream protocol is HTTP).",
+      "properties": {
+        "methods": {
+          "description": "HTTP methods supported by this route.",
+          "items": {
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "DELETE",
+              "PATCH"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "path": {
+          "description": "Path pattern for the route.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "path_suffix_mode": {
+          "default": "append",
+          "description": "How to treat /{path_suffix} from the proxy URL. 'disabled' rejects path_suffix usage; 'append' appends it to path.",
+          "enum": [
+            "disabled",
+            "append"
+          ],
+          "type": "string"
+        },
+        "query_allowlist": {
+          "default": [],
+          "description": "White-listed query parameters. If empty, allow none.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "methods",
+        "path"
+      ],
+      "type": "object"
+    },
+    "plugin_binding": {
+      "description": "One plugin of the chain together with the configuration it runs under.",
+      "properties": {
+        "config": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "String key/value pairs defined by the plugin being bound.",
+          "type": "object"
+        },
+        "plugin_ref": {
+          "description": "Plugin being bound, as a full GTS identifier `gts.cf.core.oagw.{type}_plugin.v1~…`; see DESIGN's plugin identification model.",
+          "format": "gts-identifier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plugin_ref"
+      ],
+      "type": "object"
+    },
+    "rate_limit": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "default": "token_bucket",
+          "description": "Rate limiting algorithm. token_bucket allows bursts; sliding_window prevents boundary bursts.",
+          "enum": [
+            "token_bucket",
+            "sliding_window"
+          ],
+          "type": "string"
+        },
+        "budget": {
+          "description": "Budget descendants draw on; the sum of the child allocations is bounded by it.",
+          "properties": {
+            "mode": {
+              "default": "unlimited",
+              "description": "unlimited: no budget tracking; allocated: parent allocates a fixed budget to children; shared: children share the parent's budget.",
+              "enum": [
+                "unlimited",
+                "allocated",
+                "shared"
+              ],
+              "type": "string"
+            },
+            "overcommit_ratio": {
+              "default": 1.0,
+              "description": "How far the sum of child allocations may exceed `total`.",
+              "maximum": 2.0,
+              "minimum": 1.0,
+              "type": "number"
+            },
+            "total": {
+              "description": "Total tokens the parent allocates across its descendants.",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "burst": {
+          "properties": {
+            "capacity": {
+              "description": "Maximum burst size (bucket capacity). Defaults to sustained.rate if not specified.",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "capacity"
+          ],
+          "type": "object"
+        },
+        "cost": {
+          "default": 1,
+          "description": "Tokens consumed per request. Useful for weighted endpoints.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "response_headers": {
+          "default": true,
+          "description": "Include the `X-RateLimit-*` headers in responses.",
+          "type": "boolean"
+        },
+        "scope": {
+          "default": "tenant",
+          "description": "Scope for rate limit counters.",
+          "enum": [
+            "global",
+            "tenant",
+            "user",
+            "ip",
+            "route"
+          ],
+          "type": "string"
+        },
+        "sharing": {
+          "default": "private",
+          "description": "Sharing mode for rate limits. enforce: descendants cannot exceed this limit.",
+          "enum": [
+            "private",
+            "inherit",
+            "enforce"
+          ],
+          "type": "string"
+        },
+        "strategy": {
+          "default": "reject",
+          "description": "Behavior when limit exceeded.",
+          "enum": [
+            "reject",
+            "queue",
+            "degrade"
+          ],
+          "type": "string"
+        },
+        "sustained": {
+          "properties": {
+            "rate": {
+              "description": "Tokens replenished per window.",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "window": {
+              "default": "second",
+              "description": "Time window for sustained rate.",
+              "enum": [
+                "second",
+                "minute",
+                "hour",
+                "day"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "rate"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "sustained"
+      ],
+      "type": "object"
     }
-  }
+  },
+  "properties": {
+    "cors": {
+      "$ref": "#/definitions/cors",
+      "description": "CORS configuration for the route."
+    },
+    "enabled": {
+      "default": true,
+      "description": "Whether this route is enabled. A disabled route is excluded from route matching.",
+      "type": "boolean"
+    },
+    "id": {
+      "description": "System-generated unique identifier.",
+      "format": "uuid",
+      "readOnly": true,
+      "type": "string"
+    },
+    "match": {
+      "additionalProperties": false,
+      "description": "Protocol-scoped inbound matching rules. Exactly one of {http|grpc} must be present.",
+      "oneOf": [
+        {
+          "required": [
+            "http"
+          ]
+        },
+        {
+          "required": [
+            "grpc"
+          ]
+        }
+      ],
+      "properties": {
+        "grpc": {
+          "$ref": "#/definitions/grpc_match"
+        },
+        "http": {
+          "$ref": "#/definitions/http_match"
+        }
+      },
+      "type": "object"
+    },
+    "plugins": {
+      "properties": {
+        "items": {
+          "default": [],
+          "description": "Plugins bound to this route, applied in order within each plugin type; each item names the plugin by GTS identifier and carries its configuration.",
+          "items": {
+            "$ref": "#/definitions/plugin_binding"
+          },
+          "type": "array"
+        },
+        "sharing": {
+          "default": "private",
+          "description": "Sharing mode for plugin chain.",
+          "enum": [
+            "private",
+            "inherit",
+            "enforce"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "priority": {
+      "default": 0,
+      "description": "Tie-breaker among an upstream's routes once the longest path prefix has matched. Two enabled routes with the same path, priority and method under one upstream conflict.",
+      "type": "integer"
+    },
+    "rate_limit": {
+      "$ref": "#/definitions/rate_limit",
+      "description": "Rate limiting configuration for the route."
+    },
+    "tags": {
+      "description": "Flat tags for categorization and discovery.",
+      "items": {
+        "pattern": "^[a-z0-9_-]+$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tenant_id": {
+      "description": "Tenant that owns this resource. Set by the server.",
+      "format": "uuid",
+      "readOnly": true,
+      "type": "string"
+    },
+    "upstream_id": {
+      "description": "Reference to the upstream service for this route.",
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "upstream_id",
+    "match"
+  ],
+  "title": "OAGW Route",
+  "type": "object"
 }
