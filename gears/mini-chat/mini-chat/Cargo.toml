@@ -50,6 +50,10 @@ inventory = { workspace = true }
 tokio-retry = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
+tokio-stream = { workspace = true }
+async-stream = { workspace = true }
+parking_lot = { workspace = true }
+mime = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
 multer = "3.1"
@@ -71,9 +75,10 @@ http = { workspace = true }
 
 # Time handling
 time = { workspace = true }
+chrono = { workspace = true, features = ["clock", "std"] }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }
@@ -86,6 +91,9 @@ thiserror = { workspace = true }
 opentelemetry = { workspace = true }
 
 # Local dependencies
+mini-chat-sdk = { workspace = true }
+toolkit-odata-macros = { workspace = true }
+toolkit-utils = { workspace = true }
 toolkit = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
@@ -105,8 +113,12 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+http-body-util = { workspace = true }
+tempfile = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 
