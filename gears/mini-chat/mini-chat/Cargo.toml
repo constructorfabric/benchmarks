@@ -28,6 +28,9 @@ authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.3
 # AuthZ resolver for authorization (PEP flow)
 authz-resolver-sdk = { workspace = true }
 
+# Mini Chat SDK — plugin contracts and models
+mini-chat-sdk = { workspace = true }
+
 # OAGW SDK — proxy calls, SSE stream, gateway errors
 oagw-sdk = { workspace = true }
 
@@ -98,6 +101,7 @@ toolkit-db-macros = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+toolkit-odata-macros = { workspace = true }
 heck = { workspace = true }
 secrecy = { workspace = true }
 # k8s leader election (optional, behind k8s feature)
