@@ -874,7 +874,7 @@ dependencies = [
  "pin-project-lite",
  "rand 0.9.4",
  "rustls",
- "rustls-native-certs 0.8.3",
+ "rustls-native-certs 0.8.4",
  "rustls-pki-types",
  "serde",
  "serde_derive",
@@ -2095,7 +2095,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-cng-crypto",
- "rustls-native-certs 0.8.3",
+ "rustls-native-certs 0.8.4",
  "rustls-pki-types",
  "secrecy",
  "serde",
@@ -3975,7 +3975,7 @@ dependencies = [
  "hyper-util",
  "log",
  "rustls",
- "rustls-native-certs 0.8.3",
+ "rustls-native-certs 0.8.4",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -6641,9 +6641,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
+checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
 dependencies = [
  "openssl-probe 0.2.1",
  "rustls-pki-types",
@@ -6681,7 +6681,7 @@ dependencies = [
  "log",
  "once_cell",
  "rustls",
- "rustls-native-certs 0.8.3",
+ "rustls-native-certs 0.8.4",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.103.15",
  "security-framework 3.7.0",
