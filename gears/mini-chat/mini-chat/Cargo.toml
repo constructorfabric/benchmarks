@@ -73,7 +73,8 @@ http = { workspace = true }
 time = { workspace = true }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }
@@ -86,6 +87,7 @@ thiserror = { workspace = true }
 opentelemetry = { workspace = true }
 
 # Local dependencies
+mini-chat-sdk = { package = "cf-gears-mini-chat-sdk", version = "0.4.5", path = "../mini-chat-sdk" }
 toolkit = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
@@ -98,6 +100,7 @@ toolkit-db-macros = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+toolkit-odata-macros = { workspace = true }
 heck = { workspace = true }
 secrecy = { workspace = true }
 # k8s leader election (optional, behind k8s feature)
@@ -105,7 +108,6 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
 
