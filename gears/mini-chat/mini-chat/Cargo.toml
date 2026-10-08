@@ -38,6 +38,9 @@ authn-resolver = { workspace = true }
 authz-resolver = { workspace = true }
 oagw = { workspace = true }
 
+# Mini-chat SDK (catalog, policy, events, plugin contracts)
+mini-chat-sdk = { workspace = true }
+
 # Core dependencies
 anyhow = { workspace = true }
 async-trait = { workspace = true }
@@ -50,6 +53,8 @@ inventory = { workspace = true }
 tokio-retry = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
+async-stream = { workspace = true }
+tokio-stream = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
 multer = "3.1"
@@ -98,6 +103,7 @@ toolkit-db-macros = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+toolkit-odata-macros = { workspace = true }
 heck = { workspace = true }
 secrecy = { workspace = true }
 # k8s leader election (optional, behind k8s feature)
@@ -105,6 +111,9 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
+tower = { workspace = true }
+http-body-util = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite"] }
 chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }

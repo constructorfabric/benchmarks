@@ -97,6 +97,7 @@ members = [
     "gears/system/authz-resolver/plugins/static-authz-plugin",
     "gears/system/oagw/oagw",
     "gears/system/oagw/oagw-sdk",
+    "gears/mini-chat/mini-chat-sdk",
     "gears/mini-chat/mini-chat",
     "gears/system/license-resolver/license-resolver-sdk",
     "gears/system/license-resolver/license-resolver",
@@ -736,6 +737,7 @@ gts-id = "0.12.1"
 gts = "0.12.1"
 gts-macros = "0.12.1"
 
+mini-chat-sdk = { package = "cf-gears-mini-chat-sdk", version = "0.4.5", path = "gears/mini-chat/mini-chat-sdk" }
 license-resolver-sdk = { package = "cf-gears-license-resolver-sdk", version = "0.1.4", path = "gears/system/license-resolver/license-resolver-sdk" }
 license-resolver = { package = "cf-gears-license-resolver", version = "0.1.5", path = "gears/system/license-resolver/license-resolver" }
 
