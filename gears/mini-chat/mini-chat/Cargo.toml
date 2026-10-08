@@ -31,6 +31,9 @@ authz-resolver-sdk = { workspace = true }
 # OAGW SDK — proxy calls, SSE stream, gateway errors
 oagw-sdk = { workspace = true }
 
+# Mini Chat SDK (plugin traits, policy models, usage/audit events)
+mini-chat-sdk = { workspace = true }
+
 # Types registry for plugin discovery
 types-registry-sdk = { workspace = true }
 types-registry = { workspace = true }
@@ -71,9 +74,10 @@ http = { workspace = true }
 
 # Time handling
 time = { workspace = true }
+chrono = { workspace = true }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4", "v7", "serde"] }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }

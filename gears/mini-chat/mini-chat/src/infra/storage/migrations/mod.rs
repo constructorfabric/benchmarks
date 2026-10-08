@@ -1,0 +1,14 @@
+//! Schema migrations (plus the shared outbox migrations, added by the gear).
+
+use sea_orm_migration::{MigrationTrait, MigratorTrait};
+
+mod m0001_initial_schema;
+
+pub struct Migrator;
+
+#[async_trait::async_trait]
+impl MigratorTrait for Migrator {
+    fn migrations() -> Vec<Box<dyn MigrationTrait>> {
+        vec![Box::new(m0001_initial_schema::Migration)]
+    }
+}
