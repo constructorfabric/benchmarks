@@ -1,0 +1,1003 @@
+// Updated: 2026-04-07 by Constructor Tech
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter};
+
+use crate::domain::ports::MiniChatMetricsPort;
+use crate::domain::ports::metric_labels::key;
+
+/// OpenTelemetry-backed implementation of [`MiniChatMetricsPort`].
+///
+/// Holds ALL `OTel` instruments. Active (P0+P1) instruments implement the
+/// port trait. Deferred instruments are `#[allow(dead_code)]` fields with
+/// `// deferred:` comments — they compile but produce no runtime overhead
+/// until wired.
+///
+/// ## `_total` suffix
+///
+/// Counter instrument names intentionally omit the `_total` suffix.
+/// Metrics are exported over OTLP; the OTLP-to-Prometheus conversion
+/// downstream conventionally appends `_total` to counters, so including it
+/// here would produce a doubled `_total_total` suffix.
+pub struct MiniChatMetricsMeter {
+    // ── P0: Streaming & UX Health ──────────────────────────────────────
+    stream_started: Counter<u64>,
+    stream_completed: Counter<u64>,
+    stream_failed: Counter<u64>,
+    stream_disconnected: Counter<u64>,
+    active_streams: UpDownCounter<i64>,
+    ttft_provider_ms: Histogram<f64>,
+    ttft_overhead_ms: Histogram<f64>,
+    stream_total_latency_ms: Histogram<f64>,
+
+    // ── P0: Turn Mutations ─────────────────────────────────────────────
+    turn_mutation: Counter<u64>,
+    turn_mutation_latency_ms: Histogram<f64>,
+
+    // ── P0: Audit Emission Health ──────────────────────────────────────
+    audit_emit: Counter<u64>,
+    finalization_latency_ms: Histogram<f64>,
+
+    // ── P1: Quota Enforcement ──────────────────────────────────────────
+    quota_preflight: Counter<u64>,
+    quota_reserve: Counter<u64>,
+    quota_commit: Counter<u64>,
+    quota_overshoot: Counter<u64>,
+    quota_estimated_tokens: Histogram<f64>,
+    quota_actual_tokens: Histogram<f64>,
+
+    // ── P1: Streaming Incomplete ───────────────────────────────────────
+    stream_incomplete: Counter<u64>,
+
+    // ── P1: Cancellation ───────────────────────────────────────────────
+    cancel_requested: Counter<u64>,
+    cancel_effective: Counter<u64>,
+    time_to_abort_ms: Histogram<f64>,
+    streams_aborted: Counter<u64>,
+
+    // ── P1: Attachment Upload ──────────────────────────────────────────
+    attachment_upload: Counter<u64>,
+    attachment_upload_bytes: Histogram<f64>,
+    attachments_pending: UpDownCounter<i64>,
+
+    // ── P1: Tool call counters ──────────────────────────────────────────
+    code_interpreter_calls: Counter<u64>,
+
+    // ── P1: Knowledge Search ───────────────────────────────────────────
+    knowledge_search: Counter<u64>,
+    knowledge_search_latency_ms: Histogram<f64>,
+    knowledge_search_chunks: Histogram<f64>,
+
+    // ════════════════════════════════════════════════════════════════════
+    // DEFERRED INSTRUMENTS — declared but not wired to the domain port.
+    // ════════════════════════════════════════════════════════════════════
+
+    // ── P2: Provider / OAGW (deferred: waiting for stable provider endpoint enum) ──
+    #[allow(dead_code)]
+    provider_requests: Counter<u64>,
+    #[allow(dead_code)]
+    provider_errors: Counter<u64>,
+    #[allow(dead_code)]
+    provider_latency_ms: Histogram<f64>,
+    #[allow(dead_code)]
+    oagw_retries: Counter<u64>,
+    #[allow(dead_code)]
+    oagw_upstream_latency_ms: Histogram<f64>,
+    #[allow(dead_code)]
+    oagw_circuit_open: Counter<u64>,
+
+    // ── P2: Outbox (deferred: waiting for toolkit_db::outbox integration) ──
+    #[allow(dead_code)]
+    outbox_dead: Counter<u64>,
+    #[allow(dead_code)]
+    outbox_pending_age_seconds: Histogram<f64>,
+    #[allow(dead_code)]
+    outbox_dead_rows: Gauge<i64>,
+    #[allow(dead_code)]
+    outbox_oldest_pending_age_seconds: Gauge<f64>,
+    #[allow(dead_code)]
+    outbox_enqueue: Counter<u64>,
+    #[allow(dead_code)]
+    outbox_dispatch: Counter<u64>,
+
+    // ── P2: Database (deferred: need bounded query allowlist) ──
+    #[allow(dead_code)]
+    db_query_latency_ms: Histogram<f64>,
+    #[allow(dead_code)]
+    db_errors: Counter<u64>,
+
+    // ── P2: Cancel deep instrumentation (deferred: complex cancel instrumentation) ──
+    #[allow(dead_code)]
+    tokens_after_cancel: Histogram<f64>,
+    #[allow(dead_code)]
+    time_from_ui_disconnect_to_cancel_ms: Histogram<f64>,
+    #[allow(dead_code)]
+    cancel_orphan: Counter<u64>,
+
+    // ── P3: Tool calls (deferred: tool call execution not implemented) ──
+    #[allow(dead_code)]
+    tool_calls: Counter<u64>,
+    #[allow(dead_code)]
+    tool_call_limited: Counter<u64>,
+    #[allow(dead_code)]
+    file_search_latency_ms: Histogram<f64>,
+    #[allow(dead_code)]
+    web_search_latency_ms: Histogram<f64>,
+    #[allow(dead_code)]
+    web_search_disabled: Counter<u64>,
+    #[allow(dead_code)]
+    citations_count: Histogram<f64>,
+    #[allow(dead_code)]
+    citations_by_source: Counter<u64>,
+
+    // ── P3: Vector store (deferred: vector store integration not implemented) ──
+    #[allow(dead_code)]
+    retrieval_latency_ms: Histogram<f64>,
+    #[allow(dead_code)]
+    retrieval_chunks_returned: Histogram<f64>,
+    #[allow(dead_code)]
+    retrieval_zero_hit: Counter<u64>,
+    #[allow(dead_code)]
+    indexed_chunks_per_chat: Histogram<f64>,
+    #[allow(dead_code)]
+    upload_rejected: Counter<u64>,
+    #[allow(dead_code)]
+    vector_stores_per_user: Histogram<f64>,
+    #[allow(dead_code)]
+    context_truncation: Counter<u64>,
+
+    // ── P1: Cleanup worker ──────────────────────────────────────────────
+    cleanup_completed: Counter<u64>,
+    cleanup_failed: Counter<u64>,
+    cleanup_retry: Counter<u64>,
+    #[allow(dead_code)] // gauge is recorded but not read back; the OTel SDK exports it
+    cleanup_backlog: Gauge<i64>,
+    cleanup_vs_with_failed_attachments: Counter<u64>,
+    secondary_cleanup_skipped: Counter<u64>,
+
+    // ── P3: Summary regen (deferred) ──
+    #[allow(dead_code)]
+    summary_regen: Counter<u64>,
+
+    // ── P3: Image quota (deferred: image quota not implemented) ──
+    #[allow(dead_code)]
+    quota_image_commit: Counter<u64>,
+
+    // ── Idempotent replay: replay is implemented (domain/service/replay.rs),
+    // but nothing records this counter yet ──
+    #[allow(dead_code)]
+    stream_replay: Counter<u64>,
+
+    // ── P2: Quota v2 (deferred: image quota not implemented) ──
+    #[allow(dead_code)]
+    quota_preflight_v2: Counter<u64>,
+    #[allow(dead_code)]
+    quota_overshoot_tokens: Histogram<f64>,
+    // quota_reserved_tokens{period} gauge: omitted — only needed if a pending/reserved concept exists
+
+    // ── P2: Attachment indexing (deferred: indexing pipeline not implemented) ──
+    #[allow(dead_code)]
+    attachment_index: Counter<u64>,
+    #[allow(dead_code)]
+    attachment_summary: Counter<u64>,
+    #[allow(dead_code)]
+    attachments_failed: UpDownCounter<i64>,
+    #[allow(dead_code)]
+    attachment_index_latency_ms: Histogram<f64>,
+
+    // ── P3: Image usage (deferred: image support not implemented) ──
+    #[allow(dead_code)]
+    image_inputs_per_turn: Histogram<f64>,
+    #[allow(dead_code)]
+    image_turns: Counter<u64>,
+
+    // ── P1: Orphan Watchdog ──────────────────────────────────────────────
+    orphan_detected: Counter<u64>,
+    orphan_finalized: Counter<u64>,
+    orphan_scan_duration: Histogram<f64>,
+
+    // ── P1: Upload Reaper ───────────────────────────────────────────────
+    upload_abandoned: Counter<u64>,
+    background_indexing: Counter<u64>,
+    upload_reaper_scan_duration: Histogram<f64>,
+
+    // ── P1: Thread Summary Health ───────────────────────────────────────
+    thread_summary_trigger: Counter<u64>,
+    thread_summary_execution: Counter<u64>,
+    thread_summary_cas_conflicts: Counter<u64>,
+    summary_fallback: Counter<u64>,
+
+    // ── Low-priority deferred ──────────────────────────────────────────
+    #[allow(dead_code)]
+    quota_tier_downgrade: Counter<u64>, // deferred: tier downgrade logic doesn't exist yet
+    #[allow(dead_code)]
+    quota_negative: Counter<u64>, // deferred: negative balance alerting
+    #[allow(dead_code)]
+    audit_redaction_hits: Counter<u64>, // deferred: redaction patterns not configurable
+    #[allow(dead_code)]
+    media_rejected: Counter<u64>, // deferred: overlaps with attachment_upload
+    #[allow(dead_code)]
+    unknown_error_code: Counter<u64>, // deferred: cardinality risk
+    #[allow(dead_code)]
+    credits_overflow: Counter<u64>, // deferred: billing edge case
+}
+
+impl MiniChatMetricsMeter {
+    /// Create all instruments. `prefix` defaults to `"mini_chat"`.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn new(meter: &Meter, prefix: &str) -> Self {
+        Self {
+            // ── P0: Streaming ──────────────────────────────────────────
+            stream_started: meter
+                .u64_counter(format!("{prefix}_stream_started"))
+                .with_description("Streams initiated")
+                .build(),
+            stream_completed: meter
+                .u64_counter(format!("{prefix}_stream_completed"))
+                .with_description("Streams completed successfully")
+                .build(),
+            stream_failed: meter
+                .u64_counter(format!("{prefix}_stream_failed"))
+                .with_description("Streams that ended with an error")
+                .build(),
+            stream_disconnected: meter
+                .u64_counter(format!("{prefix}_stream_disconnected"))
+                .with_description("Client disconnects by lifecycle stage")
+                .build(),
+            active_streams: meter
+                .i64_up_down_counter(format!("{prefix}_active_streams"))
+                .with_description("Currently active SSE streams")
+                .build(),
+            ttft_provider_ms: meter
+                .f64_histogram(format!("{prefix}_ttft_provider_ms"))
+                .with_description("Time-to-first-token from provider (ms)")
+                .build(),
+            ttft_overhead_ms: meter
+                .f64_histogram(format!("{prefix}_ttft_overhead_ms"))
+                .with_description("Additional overhead beyond provider TTFT (ms)")
+                .build(),
+            stream_total_latency_ms: meter
+                .f64_histogram(format!("{prefix}_stream_total_latency_ms"))
+                .with_description("Total stream duration (ms)")
+                .build(),
+
+            // ── P0: Turn Mutations ─────────────────────────────────────
+            turn_mutation: meter
+                .u64_counter(format!("{prefix}_turn_mutation"))
+                .with_description("Turn mutation operations")
+                .build(),
+            turn_mutation_latency_ms: meter
+                .f64_histogram(format!("{prefix}_turn_mutation_latency_ms"))
+                .with_description("Turn mutation latency (ms)")
+                .build(),
+
+            // ── P0: Audit ──────────────────────────────────────────────
+            audit_emit: meter
+                .u64_counter(format!("{prefix}_audit_emit"))
+                .with_description("Audit event emissions")
+                .build(),
+            finalization_latency_ms: meter
+                .f64_histogram(format!("{prefix}_finalization_latency_ms"))
+                .with_description("Turn finalization latency (ms)")
+                .build(),
+
+            // ── P1: Quota ──────────────────────────────────────────────
+            quota_preflight: meter
+                .u64_counter(format!("{prefix}_quota_preflight"))
+                .with_description("Quota preflight decisions")
+                .build(),
+            quota_reserve: meter
+                .u64_counter(format!("{prefix}_quota_reserve"))
+                .with_description("Quota reserves written")
+                .build(),
+            quota_commit: meter
+                .u64_counter(format!("{prefix}_quota_commit"))
+                .with_description("Quota commits (actual usage)")
+                .build(),
+            quota_overshoot: meter
+                .u64_counter(format!("{prefix}_quota_overshoot"))
+                .with_description("Quota overshoots (actual > reserved)")
+                .build(),
+            quota_estimated_tokens: meter
+                .f64_histogram(format!("{prefix}_quota_estimated_tokens"))
+                .with_description("Estimated token count at preflight")
+                .build(),
+            quota_actual_tokens: meter
+                .f64_histogram(format!("{prefix}_quota_actual_tokens"))
+                .with_description("Actual token count at settlement")
+                .build(),
+
+            // ── P1: Stream Incomplete ──────────────────────────────────
+            stream_incomplete: meter
+                .u64_counter(format!("{prefix}_stream_incomplete"))
+                .with_description("Streams that ended incomplete (e.g. max_output_tokens)")
+                .build(),
+
+            // ── P1: Cancellation ───────────────────────────────────────
+            cancel_requested: meter
+                .u64_counter(format!("{prefix}_cancel_requested"))
+                .with_description("Cancel requests received")
+                .build(),
+            cancel_effective: meter
+                .u64_counter(format!("{prefix}_cancel_effective"))
+                .with_description("Cancels that took effect")
+                .build(),
+            time_to_abort_ms: meter
+                .f64_histogram(format!("{prefix}_time_to_abort_ms"))
+                .with_description("Time from cancel request to stream abort (ms)")
+                .build(),
+            streams_aborted: meter
+                .u64_counter(format!("{prefix}_streams_aborted"))
+                .with_description("Streams aborted by trigger type")
+                .build(),
+
+            // ── P1: Attachment ─────────────────────────────────────────
+            attachment_upload: meter
+                .u64_counter(format!("{prefix}_attachment_upload"))
+                .with_description("Attachment upload attempts")
+                .build(),
+            attachment_upload_bytes: meter
+                .f64_histogram(format!("{prefix}_attachment_upload_bytes"))
+                .with_description("Attachment upload size (bytes)")
+                .build(),
+            attachments_pending: meter
+                .i64_up_down_counter(format!("{prefix}_attachments_pending"))
+                .with_description("Attachments currently being processed")
+                .build(),
+
+            // ── P1: Tool call counters ─────────────────────────────────
+            code_interpreter_calls: meter
+                .u64_counter(format!("{prefix}_code_interpreter_calls"))
+                .with_description("Code interpreter call completions")
+                .build(),
+
+            // ── P1: Knowledge Search ───────────────────────────────────
+            knowledge_search: meter
+                .u64_counter(format!("{prefix}_knowledge_search"))
+                .with_description("Knowledge search (RAG) call outcomes")
+                .build(),
+            knowledge_search_latency_ms: meter
+                .f64_histogram(format!("{prefix}_knowledge_search_latency_ms"))
+                .with_description("Knowledge search call latency (ms)")
+                .build(),
+            knowledge_search_chunks: meter
+                .f64_histogram(format!("{prefix}_knowledge_search_chunks"))
+                .with_description("Chunks returned per knowledge search call")
+                .build(),
+
+            // ════════════════════════════════════════════════════════════
+            // DEFERRED INSTRUMENTS
+            // ════════════════════════════════════════════════════════════
+
+            // deferred: waiting for stable provider endpoint enum
+            provider_requests: meter
+                .u64_counter(format!("{prefix}_provider_requests"))
+                .with_description("Provider API requests")
+                .build(),
+            provider_errors: meter
+                .u64_counter(format!("{prefix}_provider_errors"))
+                .with_description("Provider API errors")
+                .build(),
+            provider_latency_ms: meter
+                .f64_histogram(format!("{prefix}_provider_latency_ms"))
+                .with_description("Provider API latency (ms)")
+                .build(),
+            oagw_retries: meter
+                .u64_counter(format!("{prefix}_oagw_retries"))
+                .with_description("OAGW retry attempts")
+                .build(),
+            oagw_upstream_latency_ms: meter
+                .f64_histogram(format!("{prefix}_oagw_upstream_latency_ms"))
+                .with_description("OAGW upstream latency (ms)")
+                .build(),
+            oagw_circuit_open: meter
+                .u64_counter(format!("{prefix}_oagw_circuit_open"))
+                .with_description("OAGW circuit breaker opens")
+                .build(),
+
+            // deferred: waiting for toolkit_db::outbox integration
+            outbox_dead: meter
+                .u64_counter(format!("{prefix}_outbox_dead"))
+                .with_description("Outbox dead letter events")
+                .build(),
+            outbox_pending_age_seconds: meter
+                .f64_histogram(format!("{prefix}_outbox_pending_age_seconds"))
+                .with_description("Outbox pending event age (seconds)")
+                .build(),
+            outbox_dead_rows: meter
+                .i64_gauge(format!("{prefix}_outbox_dead_rows"))
+                .with_description("Current dead letter row count")
+                .build(),
+            outbox_oldest_pending_age_seconds: meter
+                .f64_gauge(format!("{prefix}_outbox_oldest_pending_age_seconds"))
+                .with_description("Age of oldest pending outbox event (seconds)")
+                .build(),
+            outbox_enqueue: meter
+                .u64_counter(format!("{prefix}_outbox_enqueue"))
+                .with_description("Outbox events enqueued")
+                .build(),
+            outbox_dispatch: meter
+                .u64_counter(format!("{prefix}_outbox_dispatch"))
+                .with_description("Outbox events dispatched")
+                .build(),
+
+            // deferred: need bounded query allowlist
+            db_query_latency_ms: meter
+                .f64_histogram(format!("{prefix}_db_query_latency_ms"))
+                .with_description("DB query latency (ms)")
+                .build(),
+            db_errors: meter
+                .u64_counter(format!("{prefix}_db_errors"))
+                .with_description("DB errors")
+                .build(),
+
+            // deferred: complex cancel instrumentation
+            tokens_after_cancel: meter
+                .f64_histogram(format!("{prefix}_tokens_after_cancel"))
+                .with_description("Tokens received after cancel signal")
+                .build(),
+            time_from_ui_disconnect_to_cancel_ms: meter
+                .f64_histogram(format!("{prefix}_time_from_ui_disconnect_to_cancel_ms"))
+                .with_description("Time from UI disconnect to effective cancel (ms)")
+                .build(),
+            cancel_orphan: meter
+                .u64_counter(format!("{prefix}_cancel_orphan"))
+                .with_description("Orphaned cancel events")
+                .build(),
+
+            // deferred: tool call execution not implemented
+            tool_calls: meter
+                .u64_counter(format!("{prefix}_tool_calls"))
+                .with_description("Tool call invocations")
+                .build(),
+            tool_call_limited: meter
+                .u64_counter(format!("{prefix}_tool_call_limited"))
+                .with_description("Tool calls rejected by limit")
+                .build(),
+            file_search_latency_ms: meter
+                .f64_histogram(format!("{prefix}_file_search_latency_ms"))
+                .with_description("File search tool latency (ms)")
+                .build(),
+            web_search_latency_ms: meter
+                .f64_histogram(format!("{prefix}_web_search_latency_ms"))
+                .with_description("Web search tool latency (ms)")
+                .build(),
+            web_search_disabled: meter
+                .u64_counter(format!("{prefix}_web_search_disabled"))
+                .with_description("Web search requests rejected (disabled)")
+                .build(),
+            citations_count: meter
+                .f64_histogram(format!("{prefix}_citations_count"))
+                .with_description("Citations per response")
+                .build(),
+            citations_by_source: meter
+                .u64_counter(format!("{prefix}_citations_by_source"))
+                .with_description("Citations by source type")
+                .build(),
+
+            // deferred: vector store integration not implemented
+            retrieval_latency_ms: meter
+                .f64_histogram(format!("{prefix}_retrieval_latency_ms"))
+                .with_description("Vector retrieval latency (ms)")
+                .build(),
+            retrieval_chunks_returned: meter
+                .f64_histogram(format!("{prefix}_retrieval_chunks_returned"))
+                .with_description("Chunks returned per retrieval")
+                .build(),
+            retrieval_zero_hit: meter
+                .u64_counter(format!("{prefix}_retrieval_zero_hit"))
+                .with_description("Retrievals returning zero results")
+                .build(),
+            indexed_chunks_per_chat: meter
+                .f64_histogram(format!("{prefix}_indexed_chunks_per_chat"))
+                .with_description("Indexed chunks per chat")
+                .build(),
+            upload_rejected: meter
+                .u64_counter(format!("{prefix}_upload_rejected"))
+                .with_description("File uploads rejected")
+                .build(),
+            vector_stores_per_user: meter
+                .f64_histogram(format!("{prefix}_vector_stores_per_user"))
+                .with_description("Vector stores per user")
+                .build(),
+            context_truncation: meter
+                .u64_counter(format!("{prefix}_context_truncation"))
+                .with_description("Context truncation events")
+                .build(),
+
+            // ── P1: Cleanup worker ──────────────────────────────────────────
+            cleanup_completed: meter
+                .u64_counter(format!("{prefix}_cleanup_completed"))
+                .with_description("Successful provider cleanup operations")
+                .build(),
+            cleanup_failed: meter
+                .u64_counter(format!("{prefix}_cleanup_failed"))
+                .with_description("Attachment cleanup rows reaching terminal failed")
+                .build(),
+            cleanup_retry: meter
+                .u64_counter(format!("{prefix}_cleanup_retry"))
+                .with_description("Cleanup retries delegated to shared outbox")
+                .build(),
+            cleanup_backlog: meter
+                .i64_gauge(format!("{prefix}_cleanup_backlog"))
+                .with_description("Current cleanup backlog by state")
+                .build(),
+            cleanup_vs_with_failed_attachments: meter
+                .u64_counter(format!(
+                    "{prefix}_cleanup_vector_store_with_failed_attachments"
+                ))
+                .with_description("Vector store deletions with at least one failed attachment")
+                .build(),
+            secondary_cleanup_skipped: meter
+                .u64_counter(format!("{prefix}_secondary_cleanup_skipped"))
+                .with_description(
+                    "Secondary-provider cleanup skipped because the corresponding client is not \
+                     configured (permanent orphan upstream)",
+                )
+                .build(),
+
+            // deferred: summary feature not implemented
+            summary_regen: meter
+                .u64_counter(format!("{prefix}_summary_regen"))
+                .with_description("Summary regeneration events")
+                .build(),
+            // deferred: image quota not implemented
+            quota_image_commit: meter
+                .u64_counter(format!("{prefix}_quota_image_commit"))
+                .with_description("Image quota commits")
+                .build(),
+
+            // replay is implemented; this counter is not recorded yet
+            stream_replay: meter
+                .u64_counter(format!("{prefix}_stream_replay"))
+                .with_description("Stream replay events")
+                .build(),
+
+            // deferred: image quota not implemented (v2 with kind dimension)
+            quota_preflight_v2: meter
+                .u64_counter(format!("{prefix}_quota_preflight_v2"))
+                .with_description("Quota preflight decisions (v2, with kind label)")
+                .build(),
+            quota_overshoot_tokens: meter
+                .f64_histogram(format!("{prefix}_quota_overshoot_tokens"))
+                .with_description("Overshoot token count: max(actual - estimate, 0)")
+                .build(),
+
+            // deferred: indexing pipeline not implemented
+            attachment_index: meter
+                .u64_counter(format!("{prefix}_attachment_index"))
+                .with_description("Attachment indexing results")
+                .build(),
+            attachment_summary: meter
+                .u64_counter(format!("{prefix}_attachment_summary"))
+                .with_description("Attachment summary generation results")
+                .build(),
+            attachments_failed: meter
+                .i64_up_down_counter(format!("{prefix}_attachments_failed"))
+                .with_description("Attachments currently in failed state")
+                .build(),
+            attachment_index_latency_ms: meter
+                .f64_histogram(format!("{prefix}_attachment_index_latency_ms"))
+                .with_description("Attachment indexing latency (ms)")
+                .build(),
+
+            // deferred: image support not implemented
+            image_inputs_per_turn: meter
+                .f64_histogram(format!("{prefix}_image_inputs_per_turn"))
+                .with_description("Images included per Responses API call")
+                .build(),
+            image_turns: meter
+                .u64_counter(format!("{prefix}_image_turns"))
+                .with_description("Turns that included >=1 image")
+                .build(),
+
+            // ── P1: Orphan Watchdog ──────────────────────────────────────
+            orphan_detected: meter
+                .u64_counter(format!("{prefix}_orphan_detected"))
+                .with_description("Orphan turns detected by watchdog")
+                .build(),
+            orphan_finalized: meter
+                .u64_counter(format!("{prefix}_orphan_finalized"))
+                .with_description("Orphan turns finalized by watchdog (CAS won)")
+                .build(),
+            orphan_scan_duration: meter
+                .f64_histogram(format!("{prefix}_orphan_scan_duration_seconds"))
+                .with_description("Watchdog scan execution duration")
+                .build(),
+
+            // ── P1: Upload Reaper ───────────────────────────────────────
+            upload_abandoned: meter
+                .u64_counter(format!("{prefix}_attachment_upload_abandoned"))
+                .with_description(
+                    "Attachments stuck in pending/uploaded marked failed by the upload reaper",
+                )
+                .build(),
+            background_indexing: meter
+                .u64_counter(format!("{prefix}_attachment_background_indexing"))
+                .with_description(
+                    "Outcome of background indexing for documents returned as uploaded",
+                )
+                .build(),
+            upload_reaper_scan_duration: meter
+                .f64_histogram(format!("{prefix}_upload_reaper_scan_duration_seconds"))
+                .with_description("Upload reaper scan execution duration")
+                .build(),
+
+            // ── P1: Thread Summary Health ───────────────────────────────
+            thread_summary_trigger: meter
+                .u64_counter(format!("{prefix}_thread_summary_trigger"))
+                .with_description("Thread summary trigger evaluations")
+                .build(),
+            thread_summary_execution: meter
+                .u64_counter(format!("{prefix}_thread_summary_execution"))
+                .with_description("Thread summary execution outcomes")
+                .build(),
+            thread_summary_cas_conflicts: meter
+                .u64_counter(format!("{prefix}_thread_summary_cas_conflicts"))
+                .with_description("Thread summary CAS frontier conflicts")
+                .build(),
+            summary_fallback: meter
+                .u64_counter(format!("{prefix}_summary_fallback"))
+                .with_description("Summary fallback - previous summary kept")
+                .build(),
+
+            // deferred: low-priority
+            quota_tier_downgrade: meter
+                .u64_counter(format!("{prefix}_quota_tier_downgrade"))
+                .with_description("Quota tier downgrades")
+                .build(),
+            quota_negative: meter
+                .u64_counter(format!("{prefix}_quota_negative"))
+                .with_description("Negative quota balance events")
+                .build(),
+            audit_redaction_hits: meter
+                .u64_counter(format!("{prefix}_audit_redaction_hits"))
+                .with_description("Audit redaction hits")
+                .build(),
+            media_rejected: meter
+                .u64_counter(format!("{prefix}_media_rejected"))
+                .with_description("Media files rejected")
+                .build(),
+            unknown_error_code: meter
+                .u64_counter(format!("{prefix}_unknown_error_code"))
+                .with_description("Unknown error codes encountered")
+                .build(),
+            credits_overflow: meter
+                .u64_counter(format!("{prefix}_credits_overflow"))
+                .with_description("Credits overflow events")
+                .build(),
+        }
+    }
+}
+
+impl MiniChatMetricsPort for MiniChatMetricsMeter {
+    // ── P0: Streaming ──────────────────────────────────────────────────
+
+    fn record_stream_started(&self, provider: &str, model: &str) {
+        self.stream_started.add(
+            1,
+            &[
+                KeyValue::new(key::PROVIDER, provider.to_owned()),
+                KeyValue::new(key::MODEL, model.to_owned()),
+            ],
+        );
+    }
+
+    fn record_stream_completed(&self, provider: &str, model: &str) {
+        self.stream_completed.add(
+            1,
+            &[
+                KeyValue::new(key::PROVIDER, provider.to_owned()),
+                KeyValue::new(key::MODEL, model.to_owned()),
+            ],
+        );
+    }
+
+    fn record_stream_failed(&self, provider: &str, model: &str, error_code: &str) {
+        self.stream_failed.add(
+            1,
+            &[
+                KeyValue::new(key::PROVIDER, provider.to_owned()),
+                KeyValue::new(key::MODEL, model.to_owned()),
+                KeyValue::new(key::ERROR_CODE, error_code.to_owned()),
+            ],
+        );
+    }
+
+    fn record_stream_disconnected(&self, stage: &str) {
+        self.stream_disconnected
+            .add(1, &[KeyValue::new(key::STAGE, stage.to_owned())]);
+    }
+
+    fn increment_active_streams(&self) {
+        self.active_streams.add(1, &[]);
+    }
+
+    fn decrement_active_streams(&self) {
+        self.active_streams.add(-1, &[]);
+    }
+
+    fn record_ttft_provider_ms(&self, provider: &str, model: &str, ms: f64) {
+        self.ttft_provider_ms.record(
+            ms,
+            &[
+                KeyValue::new(key::PROVIDER, provider.to_owned()),
+                KeyValue::new(key::MODEL, model.to_owned()),
+            ],
+        );
+    }
+
+    fn record_ttft_overhead_ms(&self, provider: &str, model: &str, ms: f64) {
+        self.ttft_overhead_ms.record(
+            ms,
+            &[
+                KeyValue::new(key::PROVIDER, provider.to_owned()),
+                KeyValue::new(key::MODEL, model.to_owned()),
+            ],
+        );
+    }
+
+    fn record_stream_total_latency_ms(&self, provider: &str, model: &str, ms: f64) {
+        self.stream_total_latency_ms.record(
+            ms,
+            &[
+                KeyValue::new(key::PROVIDER, provider.to_owned()),
+                KeyValue::new(key::MODEL, model.to_owned()),
+            ],
+        );
+    }
+
+    // ── P0: Turn Mutations ─────────────────────────────────────────────
+
+    fn record_turn_mutation(&self, op: &str, result: &str) {
+        self.turn_mutation.add(
+            1,
+            &[
+                KeyValue::new(key::OP, op.to_owned()),
+                KeyValue::new(key::RESULT, result.to_owned()),
+            ],
+        );
+    }
+
+    fn record_turn_mutation_latency_ms(&self, op: &str, ms: f64) {
+        self.turn_mutation_latency_ms
+            .record(ms, &[KeyValue::new(key::OP, op.to_owned())]);
+    }
+
+    // ── P0: Audit ──────────────────────────────────────────────────────
+
+    fn record_audit_emit(&self, result: &str) {
+        self.audit_emit
+            .add(1, &[KeyValue::new(key::RESULT, result.to_owned())]);
+    }
+
+    fn record_finalization_latency_ms(&self, ms: f64) {
+        self.finalization_latency_ms.record(ms, &[]);
+    }
+
+    // ── P1: Quota ──────────────────────────────────────────────────────
+
+    fn record_quota_preflight(&self, decision: &str, model: &str, tier: &str) {
+        self.quota_preflight.add(
+            1,
+            &[
+                KeyValue::new(key::DECISION, decision.to_owned()),
+                KeyValue::new(key::MODEL, model.to_owned()),
+                KeyValue::new(key::TIER, tier.to_owned()),
+            ],
+        );
+    }
+
+    fn record_quota_reserve(&self, period: &str) {
+        self.quota_reserve
+            .add(1, &[KeyValue::new(key::PERIOD, period.to_owned())]);
+    }
+
+    fn record_quota_commit(&self, period: &str) {
+        self.quota_commit
+            .add(1, &[KeyValue::new(key::PERIOD, period.to_owned())]);
+    }
+
+    fn record_quota_overshoot(&self, period: &str) {
+        self.quota_overshoot
+            .add(1, &[KeyValue::new(key::PERIOD, period.to_owned())]);
+    }
+
+    fn record_quota_estimated_tokens(&self, tokens: f64) {
+        self.quota_estimated_tokens.record(tokens, &[]);
+    }
+
+    fn record_quota_actual_tokens(&self, tokens: f64) {
+        self.quota_actual_tokens.record(tokens, &[]);
+    }
+
+    // ── P1: Stream Incomplete ──────────────────────────────────────────
+
+    fn record_stream_incomplete(&self, provider: &str, model: &str, reason: &str) {
+        self.stream_incomplete.add(
+            1,
+            &[
+                KeyValue::new(key::PROVIDER, provider.to_owned()),
+                KeyValue::new(key::MODEL, model.to_owned()),
+                KeyValue::new(key::REASON, reason.to_owned()),
+            ],
+        );
+    }
+
+    // ── P1: Cancellation ───────────────────────────────────────────────
+
+    fn record_cancel_requested(&self, trigger: &str) {
+        self.cancel_requested
+            .add(1, &[KeyValue::new(key::TRIGGER, trigger.to_owned())]);
+    }
+
+    fn record_cancel_effective(&self, trigger: &str) {
+        self.cancel_effective
+            .add(1, &[KeyValue::new(key::TRIGGER, trigger.to_owned())]);
+    }
+
+    fn record_time_to_abort_ms(&self, trigger: &str, ms: f64) {
+        self.time_to_abort_ms
+            .record(ms, &[KeyValue::new(key::TRIGGER, trigger.to_owned())]);
+    }
+
+    fn record_streams_aborted(&self, trigger: &str) {
+        self.streams_aborted
+            .add(1, &[KeyValue::new(key::TRIGGER, trigger.to_owned())]);
+    }
+
+    // ── P1: Attachment ─────────────────────────────────────────────────
+
+    fn record_attachment_upload(&self, kind: &str, result: &str) {
+        self.attachment_upload.add(
+            1,
+            &[
+                KeyValue::new(key::KIND, kind.to_owned()),
+                KeyValue::new(key::RESULT, result.to_owned()),
+            ],
+        );
+    }
+
+    fn record_attachment_upload_bytes(&self, kind: &str, bytes: f64) {
+        self.attachment_upload_bytes
+            .record(bytes, &[KeyValue::new(key::KIND, kind.to_owned())]);
+    }
+
+    fn increment_attachments_pending(&self) {
+        self.attachments_pending.add(1, &[]);
+    }
+
+    fn decrement_attachments_pending(&self) {
+        self.attachments_pending.add(-1, &[]);
+    }
+
+    fn record_image_inputs_per_turn(&self, count: u32) {
+        self.image_inputs_per_turn.record(f64::from(count), &[]);
+    }
+
+    fn record_code_interpreter_calls(&self, model: &str, count: u32) {
+        self.code_interpreter_calls.add(
+            u64::from(count),
+            &[KeyValue::new(key::MODEL, model.to_owned())],
+        );
+    }
+
+    // ── P1: Orphan Watchdog ───────────────────────────────────────────
+
+    fn record_orphan_detected(&self, reason: &str) {
+        self.orphan_detected
+            .add(1, &[KeyValue::new(key::REASON, reason.to_owned())]);
+    }
+
+    fn record_orphan_finalized(&self, reason: &str) {
+        self.orphan_finalized
+            .add(1, &[KeyValue::new(key::REASON, reason.to_owned())]);
+    }
+
+    fn record_orphan_scan_duration_seconds(&self, seconds: f64) {
+        self.orphan_scan_duration.record(seconds, &[]);
+    }
+
+    // ── P1: Upload Reaper ─────────────────────────────────────────────
+
+    fn record_upload_abandoned(&self, from_status: &str) {
+        self.upload_abandoned
+            .add(1, &[KeyValue::new("from_status", from_status.to_owned())]);
+    }
+
+    fn record_upload_reaper_scan_duration_seconds(&self, seconds: f64) {
+        self.upload_reaper_scan_duration.record(seconds, &[]);
+    }
+
+    fn record_background_indexing(&self, result: &str) {
+        self.background_indexing
+            .add(1, &[KeyValue::new("result", result.to_owned())]);
+    }
+
+    // ── P1: Thread Summary Health ────────────────────────────────────
+
+    fn record_thread_summary_trigger(&self, result: &str) {
+        self.thread_summary_trigger
+            .add(1, &[KeyValue::new(key::RESULT, result.to_owned())]);
+    }
+
+    fn record_thread_summary_execution(&self, result: &str) {
+        self.thread_summary_execution
+            .add(1, &[KeyValue::new(key::RESULT, result.to_owned())]);
+    }
+
+    fn record_thread_summary_cas_conflict(&self) {
+        self.thread_summary_cas_conflicts.add(1, &[]);
+    }
+
+    fn record_summary_fallback(&self) {
+        self.summary_fallback.add(1, &[]);
+    }
+
+    // ── P1: Cleanup ──────────────────────────────────────────────────
+
+    fn record_cleanup_completed(&self, resource_type: &str) {
+        self.cleanup_completed.add(
+            1,
+            &[KeyValue::new(key::RESOURCE_TYPE, resource_type.to_owned())],
+        );
+    }
+
+    fn record_cleanup_failed(&self, resource_type: &str) {
+        self.cleanup_failed.add(
+            1,
+            &[KeyValue::new(key::RESOURCE_TYPE, resource_type.to_owned())],
+        );
+    }
+
+    fn record_cleanup_retry(&self, resource_type: &str, reason: &str) {
+        self.cleanup_retry.add(
+            1,
+            &[
+                KeyValue::new(key::RESOURCE_TYPE, resource_type.to_owned()),
+                KeyValue::new(key::REASON, reason.to_owned()),
+            ],
+        );
+    }
+
+    fn record_cleanup_backlog(&self, state: &str, resource_type: &str, count: i64) {
+        self.cleanup_backlog.record(
+            count,
+            &[
+                KeyValue::new(key::STATE, state.to_owned()),
+                KeyValue::new(key::RESOURCE_TYPE, resource_type.to_owned()),
+            ],
+        );
+    }
+
+    fn record_cleanup_vs_with_failed_attachments(&self) {
+        self.cleanup_vs_with_failed_attachments.add(1, &[]);
+    }
+
+    fn record_secondary_cleanup_skipped(&self, provider_kind: &str) {
+        self.secondary_cleanup_skipped.add(
+            1,
+            &[KeyValue::new(key::PROVIDER_KIND, provider_kind.to_owned())],
+        );
+    }
+
+    // ── P1: Knowledge Search ─────────────────────────────────────────
+
+    fn record_knowledge_search(&self, result: &str) {
+        self.knowledge_search
+            .add(1, &[KeyValue::new(key::RESULT, result.to_owned())]);
+    }
+
+    fn record_knowledge_search_latency_ms(&self, ms: f64) {
+        self.knowledge_search_latency_ms.record(ms, &[]);
+    }
+
+    fn record_knowledge_search_chunks(&self, count: f64) {
+        self.knowledge_search_chunks.record(count, &[]);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[path = "metrics_tests.rs"]
+mod metrics_tests;

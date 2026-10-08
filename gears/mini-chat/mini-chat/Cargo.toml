@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+readme = "README.md"
 keywords = ["constructorfabric", "cf-gears"]
 categories = ["artificial-intelligence"]
 metadata.docs.rs.all-features = true
@@ -22,6 +23,9 @@ default = []
 k8s = ["dep:kube", "dep:k8s-openapi"]
 
 [dependencies]
+# Plugin SDK - policy plugin traits, models, and errors
+mini-chat-sdk = { workspace = true }
+
 # AuthN resolver for S2S client credentials exchange
 authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37", path = "../../system/authn-resolver/authn-resolver-sdk" }
 

@@ -1,0 +1,649 @@
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+use utoipa::ToSchema;
+use uuid::Uuid;
+
+/// Current policy version metadata for a user.
+#[derive(Debug, Clone)]
+pub struct PolicyVersionInfo {
+    pub user_id: Uuid,
+    pub policy_version: u64,
+    pub generated_at: OffsetDateTime,
+}
+
+/// Full policy snapshot for a given version, including the model catalog
+/// and kill switches (API: `PolicyByVersionResponse`).
+#[derive(Debug, Clone)]
+pub struct PolicySnapshot {
+    pub user_id: Uuid,
+    pub policy_version: u64,
+    pub model_catalog: Vec<ModelCatalogEntry>,
+    pub kill_switches: KillSwitches,
+}
+
+/// Tenant-level kill switches from the policy snapshot. Every field is
+/// required when deserializing: a missing or renamed key is an error, not a
+/// silent `false` that would turn the switch off.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KillSwitches {
+    pub disable_premium_tier: bool,
+    pub force_standard_tier: bool,
+    pub disable_web_search: bool,
+    pub disable_file_search: bool,
+    pub disable_images: bool,
+    pub disable_code_interpreter: bool,
+}
+
+/// A single model in the catalog (API: `PolicyModelCatalogItem`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCatalogEntry {
+    /// model identifier (e.g. "`gts.cf.cyber_chat.llm.provider.v1.0~cf.core.cyber_chat.azure_openai.v1.0`").
+    pub id: String,
+    /// The model ID on the provider side (e.g., `"gpt-5.2"` for `OpenAI`,
+    /// `"claude-opus-4-6"` for Anthropic). Sent in LLM API requests.
+    pub provider_model_id: String,
+    /// Display name shown in UI (may differ from `name`).
+    pub display_name: String,
+    /// Short description of the model.
+    #[serde(default)]
+    pub description: String,
+    /// Routing key for provider resolution: a key of
+    /// `MiniChatConfig.providers` (e.g. `"openai"`, `"azure_openai"`).
+    pub provider_id: String,
+    /// Provider name for display. Not read by the gear.
+    pub provider_display_name: String,
+    /// URL to model icon.
+    #[serde(default)]
+    pub icon: String,
+    /// Model tier (standard or premium).
+    pub tier: ModelTier,
+    #[serde(default)]
+    pub enabled: bool,
+    /// Multimodal capability flags, e.g. `VISION_INPUT`, `IMAGE_GENERATION`.
+    #[serde(default)]
+    pub multimodal_capabilities: Vec<String>,
+    /// Maximum context window size in tokens.
+    pub context_window: u32,
+    /// Maximum output tokens the model can generate.
+    pub max_output_tokens: u32,
+    /// Maximum input tokens per request.
+    pub max_input_tokens: u32,
+    /// Credit multiplier for input tokens (micro-credits per 1,000,000 tokens).
+    pub input_tokens_credit_multiplier_micro: u64,
+    /// Credit multiplier for output tokens (micro-credits per 1,000,000 tokens).
+    pub output_tokens_credit_multiplier_micro: u64,
+    /// Human-readable multiplier display string (e.g. "1x", "3x").
+    #[serde(default)]
+    pub multiplier_display: String,
+    /// Per-model token estimation budgets for preflight reserve.
+    #[serde(default)]
+    pub estimation_budgets: EstimationBudgets,
+    /// Top-k chunks returned by similarity search per `file_search` call.
+    pub max_num_results: u32,
+    /// Search context size hint for the web search provider.
+    #[serde(default)]
+    pub web_search_context_size: WebSearchContextSize,
+    /// Maximum tool calls the provider may make per request.
+    #[serde(default = "default_max_tool_calls")]
+    pub max_tool_calls: u32,
+    /// Full general config captured at snapshot time.
+    pub general_config: ModelGeneralConfig,
+    /// Tenant preference settings captured at snapshot time.
+    pub preference: Option<ModelPreference>,
+    /// System prompt sent as `instructions` in every LLM request for this model.
+    /// Empty string = no system instructions.
+    #[serde(default)]
+    pub system_prompt: String,
+    /// System prompt for the thread-summary call when this model is the
+    /// summary model (`thread_summary_worker.summary_model_id`). Empty = use
+    /// `thread_summary_worker.summary_system_prompt`, then the built-in default.
+    #[serde(default)]
+    pub thread_summary_prompt: String,
+}
+
+/// Per-model token estimation budget parameters (API: `PolicyModelEstimationBudgets`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct EstimationBudgets {
+    /// Conservative bytes-per-token ratio for text estimation.
+    pub bytes_per_token_conservative: u32,
+    /// Constant overhead for protocol/framing tokens.
+    pub fixed_overhead_tokens: u32,
+    /// Percentage safety margin applied to text estimation (e.g. 10 means 10%).
+    pub safety_margin_pct: u32,
+    /// Tokens per image for vision surcharge.
+    pub image_token_budget: u32,
+    /// Fixed token overhead when `file_search` tool is included.
+    pub tool_surcharge_tokens: u32,
+    /// Fixed token overhead when `web_search` is enabled.
+    pub web_search_surcharge_tokens: u32,
+    /// Fixed token overhead when `code_interpreter` is enabled.
+    pub code_interpreter_surcharge_tokens: u32,
+    /// Minimum generation token budget guaranteed regardless of input estimates.
+    pub minimal_generation_floor: u32,
+}
+
+impl Default for EstimationBudgets {
+    fn default() -> Self {
+        Self {
+            bytes_per_token_conservative: 4,
+            fixed_overhead_tokens: 100,
+            safety_margin_pct: 10,
+            image_token_budget: 1000,
+            tool_surcharge_tokens: 500,
+            web_search_surcharge_tokens: 500,
+            code_interpreter_surcharge_tokens: 1000,
+            minimal_generation_floor: 50,
+        }
+    }
+}
+
+fn default_max_tool_calls() -> u32 {
+    2
+}
+
+/// LLM API inference parameters (API: `PolicyModelApiParams`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelApiParams {
+    /// Sampling parameters. Each one is sent only when set; leave them unset
+    /// for reasoning models, which reject them ("Unsupported parameter:
+    /// 'temperature' is not supported with this model").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
+    pub stop: Vec<String>,
+    /// Provider-specific extra body parameters (e.g. vLLM `top_k`,
+    /// `chat_template_kwargs`). Must be a JSON object; its keys are merged
+    /// into the top level of the request body (overwriting typed sampling
+    /// fields) by the Responses, Chat Completions and vLLM adapters. Keys the
+    /// request itself controls (`model`, `input`, `messages`, `instructions`,
+    /// `stream`, the output and tool-call caps, `tools`, `user`, `metadata`)
+    /// are ignored with a warning. The Anthropic adapter ignores the field.
+    /// A non-object value is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Value>,
+    /// Reasoning effort for o-series models (low/medium/high).
+    /// Omitted for non-reasoning models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+/// Feature capability flags (API: `PolicyModelFeatures`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelFeatures {
+    pub streaming: bool,
+    pub structured_output: bool,
+}
+
+/// Search context size hint passed to the web search provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WebSearchContextSize {
+    #[default]
+    Low,
+    Medium,
+    High,
+}
+
+/// Tool support flags (API: `PolicyModelToolSupport`).
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelToolSupport {
+    pub web_search: bool,
+    pub file_search: bool,
+    pub image_generation: bool,
+    pub code_interpreter: bool,
+    pub mcp: bool,
+}
+
+/// Supported API endpoints (API: `PolicyModelSupportedEndpoints`).
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSupportedEndpoints {
+    pub chat_completions: bool,
+    pub responses: bool,
+    pub embeddings: bool,
+    pub image_generation: bool,
+    pub audio_speech_generation: bool,
+    pub audio_transcription: bool,
+    pub audio_translation: bool,
+}
+
+/// General configuration from Settings Service (API: `PolicyModelGeneralConfig`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelGeneralConfig {
+    /// CTI type identifier of the config.
+    #[serde(rename = "type")]
+    pub config_type: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub available_from: OffsetDateTime,
+    pub max_file_size_mb: u32,
+    pub api_params: ModelApiParams,
+    pub features: ModelFeatures,
+    pub tool_support: ModelToolSupport,
+    pub supported_endpoints: ModelSupportedEndpoints,
+}
+
+/// Per-tenant preference settings (API: `PolicyModelPreference`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPreference {
+    pub is_default: bool,
+    /// Display order in the UI.
+    pub sort_order: i32,
+}
+
+/// Model pricing/capability tier.
+///
+/// Serializes as `"Standard"` / `"Premium"` (`PascalCase`).
+/// Accepts lowercase aliases (`"standard"`, `"premium"`) on deserialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModelTier {
+    #[serde(alias = "standard")]
+    Standard,
+    #[serde(alias = "premium")]
+    Premium,
+}
+
+/// Whether a user holds an active `MiniChat` license (API: `CheckUserLicenseResponse`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserLicenseStatus {
+    /// `true` if the user's status is `active` in the `active_users` table for this tenant.
+    /// `false` if the user is not found, or has status `invited`, `deactivated`, or `deleted`.
+    pub active: bool,
+}
+
+/// Per-user credit allocations for a specific policy version.
+/// NOT part of the immutable shared `PolicySnapshot` (DESIGN.md §5.2.6).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserLimits {
+    pub user_id: Uuid,
+    pub policy_version: u64,
+    pub standard: TierLimits,
+    pub premium: TierLimits,
+}
+
+/// Credit limits for a single tier within a billing period.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TierLimits {
+    pub limit_daily_credits_micro: i64,
+    pub limit_monthly_credits_micro: i64,
+}
+
+/// Token usage reported by the provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::struct_field_names)]
+pub struct UsageTokens {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// Tokens served from provider cache (`OpenAI`: `cached_tokens`).
+    pub cache_read_input_tokens: u64,
+    /// Tokens written to provider cache. Reserved for Anthropic.
+    pub cache_write_input_tokens: u64,
+    pub reasoning_tokens: u64,
+}
+
+/// Canonical usage event payload published via the outbox after finalization.
+///
+/// Single canonical type — both the outbox enqueuer (infra) and the plugin
+/// `publish_usage()` method use this same struct.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageEvent {
+    pub tenant_id: Uuid,
+    /// User who initiated the turn. `None` for system tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<Uuid>,
+    pub chat_id: Uuid,
+    /// Turn ID. `None` for system tasks (no `chat_turns` row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<Uuid>,
+    pub request_id: Uuid,
+    pub effective_model: String,
+    pub selected_model: String,
+    pub terminal_state: String,
+    pub billing_outcome: String,
+    pub usage: Option<UsageTokens>,
+    pub actual_credits_micro: i64,
+    pub settlement_method: String,
+    pub policy_version_applied: i64,
+    pub web_search_calls: u32,
+    pub code_interpreter_calls: u32,
+    /// Number of completed knowledge-search (RAG) tool calls during this turn.
+    #[serde(default)]
+    pub file_search_calls: u32,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+    /// `"user"` for normal turns, `"system"` for background system tasks.
+    #[serde(default = "default_requester_type")]
+    pub requester_type: String,
+    /// Deduplication key. For system tasks: `"{tenant_id}/{system_task_type}/{system_request_id}"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedupe_key: Option<String>,
+    /// System task type identifier (e.g. `"thread_summary_update"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_task_type: Option<String>,
+}
+
+fn default_requester_type() -> String {
+    "user".to_owned()
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    // ── KillSwitches::default safety invariant ──
+    // All kill switches must default to false; a new field defaulting to true
+    // would accidentally disable functionality across all tenants.
+
+    #[test]
+    fn kill_switches_default_all_disabled() {
+        let ks = KillSwitches::default();
+        assert!(!ks.disable_premium_tier);
+        assert!(!ks.force_standard_tier);
+        assert!(!ks.disable_web_search);
+        assert!(!ks.disable_file_search);
+        assert!(!ks.disable_images);
+        assert!(!ks.disable_code_interpreter);
+    }
+
+    #[test]
+    fn kill_switches_missing_field_is_an_error() {
+        let err = serde_json::from_value::<KillSwitches>(serde_json::json!({
+            "disable_premium_tier": false,
+            "force_standard_tier": false,
+            "disable_web_search": false,
+            "disable_file_search": false,
+            "disable_image": true,
+            "disable_code_interpreter": false,
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains("disable_images"), "{err}");
+    }
+
+    // ── EstimationBudgets::default spec values ──
+    // These defaults are specified in DESIGN.md §B.5.2 and used as the
+    // ConfigMap fallback. Changing them silently would alter token estimation
+    // for every deployment that relies on defaults.
+
+    #[test]
+    fn estimation_budgets_default_matches_spec() {
+        let eb = EstimationBudgets::default();
+        assert_eq!(eb.bytes_per_token_conservative, 4);
+        assert_eq!(eb.fixed_overhead_tokens, 100);
+        assert_eq!(eb.safety_margin_pct, 10);
+        assert_eq!(eb.image_token_budget, 1000);
+        assert_eq!(eb.tool_surcharge_tokens, 500);
+        assert_eq!(eb.web_search_surcharge_tokens, 500);
+        assert_eq!(eb.code_interpreter_surcharge_tokens, 1000);
+        assert_eq!(eb.minimal_generation_floor, 50);
+    }
+
+    // ── ModelGeneralConfig: serde(rename = "type") contract ──
+    // The upstream API sends `"type"` not `"config_type"`. If the rename
+    // attribute is removed, deserialization from the real API breaks.
+
+    fn sample_catalog_entry() -> ModelCatalogEntry {
+        ModelCatalogEntry {
+            id: "test-model".to_owned(),
+            provider_model_id: "test-model-v1".to_owned(),
+            display_name: "Test Model".to_owned(),
+            description: String::new(),
+            provider_id: "default".to_owned(),
+            provider_display_name: "Default".to_owned(),
+            icon: String::new(),
+            tier: ModelTier::Standard,
+            enabled: true,
+            multimodal_capabilities: vec![],
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            max_input_tokens: 128_000,
+            input_tokens_credit_multiplier_micro: 1_000_000,
+            output_tokens_credit_multiplier_micro: 3_000_000,
+            multiplier_display: "1x".to_owned(),
+            estimation_budgets: EstimationBudgets::default(),
+            max_num_results: 5,
+            web_search_context_size: WebSearchContextSize::Low,
+            max_tool_calls: 2,
+            general_config: sample_general_config(),
+            preference: Some(ModelPreference {
+                is_default: false,
+                sort_order: 0,
+            }),
+            system_prompt: String::new(),
+            thread_summary_prompt: String::new(),
+        }
+    }
+
+    fn sample_general_config() -> ModelGeneralConfig {
+        ModelGeneralConfig {
+            config_type: "model.general.v1".to_owned(),
+            available_from: OffsetDateTime::UNIX_EPOCH,
+            max_file_size_mb: 25,
+            api_params: ModelApiParams {
+                temperature: Some(0.7),
+                top_p: Some(1.0),
+                frequency_penalty: Some(0.0),
+                presence_penalty: Some(0.0),
+                stop: vec![],
+                extra_body: None,
+                reasoning_effort: None,
+            },
+            features: ModelFeatures {
+                streaming: true,
+                structured_output: false,
+            },
+            tool_support: ModelToolSupport {
+                web_search: false,
+                file_search: false,
+                image_generation: false,
+                code_interpreter: false,
+                mcp: false,
+            },
+            supported_endpoints: ModelSupportedEndpoints {
+                chat_completions: true,
+                responses: false,
+                embeddings: false,
+                image_generation: false,
+                audio_speech_generation: false,
+                audio_transcription: false,
+                audio_translation: false,
+            },
+        }
+    }
+
+    #[test]
+    fn general_config_serializes_type_not_config_type() {
+        let config = sample_general_config();
+        let json = serde_json::to_value(&config).unwrap();
+
+        assert!(json.get("type").is_some(), "expected JSON key 'type'");
+        assert!(
+            json.get("config_type").is_none(),
+            "config_type must not appear in JSON output"
+        );
+        assert_eq!(json["type"], "model.general.v1");
+    }
+
+    #[test]
+    fn general_config_serde_roundtrip_preserves_rename() {
+        let original = sample_general_config();
+        let json = serde_json::to_value(&original).unwrap();
+        let deserialized: ModelGeneralConfig = serde_json::from_value(json).unwrap();
+
+        assert_eq!(deserialized.config_type, original.config_type);
+    }
+
+    // ── ModelCatalogEntry: optional fields default when absent ──
+    // Fields with `#[serde(default)]` must deserialize to sensible values
+    // when omitted from JSON, so partial configs don't fail to load.
+
+    #[test]
+    fn optional_fields_absent_in_json_deserialize_to_defaults() {
+        let mut json = serde_json::to_value(sample_catalog_entry()).unwrap();
+        let obj = json.as_object_mut().unwrap();
+        obj.remove("description");
+        obj.remove("version");
+        obj.remove("icon");
+        obj.remove("enabled");
+        obj.remove("multimodal_capabilities");
+        obj.remove("multiplier_display");
+        obj.remove("estimation_budgets");
+        obj.remove("system_prompt");
+        obj.remove("thread_summary_prompt");
+        obj.remove("preference");
+
+        let entry: ModelCatalogEntry = serde_json::from_value(json).unwrap();
+        assert!(entry.description.is_empty());
+        assert!(entry.icon.is_empty());
+        assert!(!entry.enabled);
+        assert!(entry.preference.is_none());
+        assert!(entry.multimodal_capabilities.is_empty());
+        assert!(entry.multiplier_display.is_empty());
+        assert_eq!(
+            entry.estimation_budgets.bytes_per_token_conservative,
+            EstimationBudgets::default().bytes_per_token_conservative
+        );
+        assert!(entry.system_prompt.is_empty());
+        assert!(entry.thread_summary_prompt.is_empty());
+    }
+
+    // ── ModelCatalogEntry: estimation_budgets serde contract ──
+    // `estimation_budgets` defaults to `EstimationBudgets::default()` when absent.
+
+    #[test]
+    fn estimation_budgets_absent_in_json_deserializes_to_default() {
+        let mut json = serde_json::to_value(sample_catalog_entry()).unwrap();
+        json.as_object_mut().unwrap().remove("estimation_budgets");
+
+        let entry: ModelCatalogEntry = serde_json::from_value(json).unwrap();
+        let expected = EstimationBudgets::default();
+        assert_eq!(
+            entry.estimation_budgets.bytes_per_token_conservative,
+            expected.bytes_per_token_conservative
+        );
+        assert_eq!(
+            entry.estimation_budgets.fixed_overhead_tokens,
+            expected.fixed_overhead_tokens
+        );
+        assert_eq!(
+            entry.estimation_budgets.safety_margin_pct,
+            expected.safety_margin_pct
+        );
+        assert_eq!(
+            entry.estimation_budgets.image_token_budget,
+            expected.image_token_budget
+        );
+        assert_eq!(
+            entry.estimation_budgets.tool_surcharge_tokens,
+            expected.tool_surcharge_tokens
+        );
+        assert_eq!(
+            entry.estimation_budgets.web_search_surcharge_tokens,
+            expected.web_search_surcharge_tokens
+        );
+        assert_eq!(
+            entry.estimation_budgets.code_interpreter_surcharge_tokens,
+            expected.code_interpreter_surcharge_tokens
+        );
+        assert_eq!(
+            entry.estimation_budgets.minimal_generation_floor,
+            expected.minimal_generation_floor
+        );
+    }
+
+    #[test]
+    fn system_prompt_absent_in_json_deserializes_to_empty() {
+        let mut json = serde_json::to_value(sample_catalog_entry()).unwrap();
+        json.as_object_mut().unwrap().remove("system_prompt");
+
+        let entry: ModelCatalogEntry = serde_json::from_value(json).unwrap();
+        assert!(
+            entry.system_prompt.is_empty(),
+            "missing system_prompt must deserialize to empty string"
+        );
+    }
+
+    #[test]
+    fn system_prompt_roundtrips() {
+        let mut entry = sample_catalog_entry();
+        entry.system_prompt = "You are a helpful assistant.".to_owned();
+
+        let json = serde_json::to_value(&entry).unwrap();
+        assert_eq!(json["system_prompt"], "You are a helpful assistant.");
+
+        let deserialized: ModelCatalogEntry = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.system_prompt, "You are a helpful assistant.");
+    }
+
+    // ── ModelTier serde representation ──
+    // Serializes as PascalCase ("Standard"/"Premium") for the UI/API.
+    // Accepts lowercase aliases.
+
+    #[test]
+    fn model_tier_serializes_as_pascal_case() {
+        let json = serde_json::to_value(ModelTier::Premium).unwrap();
+        assert_eq!(json, serde_json::json!("Premium"));
+
+        let json = serde_json::to_value(ModelTier::Standard).unwrap();
+        assert_eq!(json, serde_json::json!("Standard"));
+    }
+
+    #[test]
+    fn model_tier_deserializes_lowercase_aliases() {
+        let premium: ModelTier = serde_json::from_value(serde_json::json!("premium")).unwrap();
+        assert_eq!(premium, ModelTier::Premium);
+
+        let standard: ModelTier = serde_json::from_value(serde_json::json!("standard")).unwrap();
+        assert_eq!(standard, ModelTier::Standard);
+    }
+
+    #[test]
+    fn model_tier_rejects_unknown_casing() {
+        let result = serde_json::from_value::<ModelTier>(serde_json::json!("PREMIUM"));
+        assert!(result.is_err());
+    }
+
+    // ── KillSwitches serde roundtrip ──
+    // Verifies that enabled switches survive serialization and that
+    // the default (all-off) state roundtrips correctly.
+
+    #[test]
+    fn kill_switches_serde_roundtrip_with_enabled_switches() {
+        let ks = KillSwitches {
+            disable_premium_tier: true,
+            force_standard_tier: false,
+            disable_web_search: true,
+            disable_file_search: false,
+            disable_images: true,
+            disable_code_interpreter: false,
+        };
+        let json = serde_json::to_value(&ks).unwrap();
+        let deserialized: KillSwitches = serde_json::from_value(json).unwrap();
+
+        assert!(deserialized.disable_premium_tier);
+        assert!(!deserialized.force_standard_tier);
+        assert!(deserialized.disable_web_search);
+        assert!(!deserialized.disable_file_search);
+        assert!(deserialized.disable_images);
+    }
+
+    #[test]
+    fn kill_switches_default_roundtrips_all_false() {
+        let ks = KillSwitches::default();
+        let json = serde_json::to_value(&ks).unwrap();
+        let deserialized: KillSwitches = serde_json::from_value(json).unwrap();
+
+        assert!(!deserialized.disable_premium_tier);
+        assert!(!deserialized.force_standard_tier);
+        assert!(!deserialized.disable_web_search);
+        assert!(!deserialized.disable_file_search);
+        assert!(!deserialized.disable_images);
+        assert!(!deserialized.disable_code_interpreter);
+    }
+}
