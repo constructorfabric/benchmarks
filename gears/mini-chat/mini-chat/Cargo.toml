@@ -31,6 +31,9 @@ authz-resolver-sdk = { workspace = true }
 # OAGW SDK — proxy calls, SSE stream, gateway errors
 oagw-sdk = { workspace = true }
 
+# Mini-chat SDK (plugin traits, policy models, events)
+mini-chat-sdk = { workspace = true }
+
 # Types registry for plugin discovery
 types-registry-sdk = { workspace = true }
 types-registry = { workspace = true }
@@ -73,7 +76,7 @@ http = { workspace = true }
 time = { workspace = true }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4", "v7", "serde"] }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }
@@ -98,6 +101,7 @@ toolkit-db-macros = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+toolkit-odata-macros = { workspace = true }
 heck = { workspace = true }
 secrecy = { workspace = true }
 # k8s leader election (optional, behind k8s feature)
