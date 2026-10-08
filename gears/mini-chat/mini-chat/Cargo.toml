@@ -86,6 +86,7 @@ thiserror = { workspace = true }
 opentelemetry = { workspace = true }
 
 # Local dependencies
+mini-chat-sdk = { workspace = true }
 toolkit = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
