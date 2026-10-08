@@ -1,0 +1,309 @@
+# mini-chat E2E configuration template (rendered by conftest.py).
+# Placeholders: __HOME__, __API_PORT__, __MOCK_PORT__
+
+server:
+  home_dir: "__HOME__"
+
+database:
+  servers:
+    sqlite_mc:
+      engine: "sqlite"
+      params:
+        WAL: "true"
+        synchronous: "NORMAL"
+        busy_timeout: "5000"
+      pool:
+        max_conns: 5
+        acquire_timeout: "30s"
+
+logging:
+  default:
+    console_level: info
+    file: "logs/server.log"
+    file_level: info
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "127.0.0.1:__API_PORT__"
+      enable_docs: false
+      cors_enabled: false
+      openapi:
+        title: "mini-chat e2e"
+        version: "0.1.0"
+        description: "mini-chat e2e"
+      defaults:
+        body_limit_bytes: 64000000
+      auth_disabled: false
+      require_auth_by_default: true
+
+  grpc-hub:
+    config:
+      listen_addr: "uds://__HOME__/grpc.sock"
+
+  gear-orchestrator:
+    config: {}
+
+  types-registry:
+    database:
+      server: "sqlite_mc"
+      file: "types_registry.db"
+    config: {}
+
+  authn-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  authz-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      mode: static_tokens
+      tokens:
+        - token: "user-a"
+          identity:
+            subject_id: "11111111-6a88-4768-9dfc-6bcd5187d9ed"
+            subject_tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+            token_scopes: ["*"]
+        - token: "user-a2"
+          identity:
+            subject_id: "44444444-6a88-4768-9dfc-6bcd5187d9ed"
+            subject_tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+            token_scopes: ["*"]
+        - token: "user-b"
+          identity:
+            subject_id: "22222222-6a88-4768-9dfc-6bcd5187d9ed"
+            subject_tenant_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+            token_scopes: ["*"]
+        - token: "user-quota"
+          identity:
+            subject_id: "55555555-6a88-4768-9dfc-6bcd5187d9ed"
+            subject_tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+            token_scopes: ["*"]
+      s2s_credentials:
+        - client_id: "mini-chat"
+          client_secret: "mini-chat-e2e-secret"
+
+  static-authz-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  single-tenant-tr-plugin:
+    config:
+      vendor: "constructorfabric"
+
+  credstore:
+    database:
+      server: "sqlite_mc"
+      file: "credstore.db"
+    config:
+      vendor: "constructorfabric"
+
+  static-credstore-plugin:
+    config:
+      secrets:
+        - key: "mock-key"
+          value: "mock-secret"
+
+  oagw:
+    config:
+      proxy_timeout_secs: 30
+      allow_http_upstream: true
+      ssrf_policy:
+        enabled: false
+
+  mini-chat:
+    database:
+      server: "sqlite_mc"
+      file: "mini_chat.db"
+    config:
+      vendor: "constructorfabric"
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-e2e-secret"
+      streaming:
+        sse_ping_interval_seconds: 5
+      quota:
+        web_search_daily_quota: 1000
+      rag:
+        max_documents_per_chat: 3
+        max_total_upload_mb_per_chat: 1
+        uploaded_file_max_size_kb: 512
+        uploaded_image_max_size_kb: 256
+        max_images_per_message: 2
+      orphan_watchdog:
+        enabled: true
+        scan_interval_secs: 1
+        timeout_secs: 90
+      upload_reaper:
+        enabled: true
+        scan_interval_secs: 1
+        stale_after_secs: 60
+      thread_summary_worker:
+        enabled: true
+        summary_model_id: "summary-model"
+      providers:
+        mock:
+          kind: openai_responses
+          host: "127.0.0.1"
+          port: __MOCK_PORT__
+          use_http: true
+          upstream_alias: "mock-llm"
+          api_path: "/v1/responses"
+          storage_kind: openai
+        mockcc:
+          kind: openai_chat_completions
+          host: "127.0.0.1"
+          port: __MOCK_PORT__
+          use_http: true
+          upstream_alias: "mock-cc"
+          api_path: "/v1/chat/completions"
+          storage_kind: openai
+        mockvllm:
+          kind: vllm_responses
+          host: "127.0.0.1"
+          port: __MOCK_PORT__
+          use_http: true
+          upstream_alias: "mock-vllm"
+          api_path: "/v1/responses"
+          storage_kind: openai
+
+  static-mini-chat-audit-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      enabled: true
+
+  static-mini-chat-model-policy-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      default_standard_limits:
+        limit_daily_credits_micro: 100000000
+        limit_monthly_credits_micro: 1000000000
+      default_premium_limits:
+        limit_daily_credits_micro: 50000000
+        limit_monthly_credits_micro: 500000000
+      model_catalog:
+        - id: "gpt-premium"
+          provider_model_id: "mock-premium"
+          display_name: "Premium"
+          description: "Premium model"
+          provider_id: "mock"
+          provider_display_name: "Mock"
+          tier: premium
+          enabled: true
+          system_prompt: "You are a test assistant."
+          multimodal_capabilities: ["VISION_INPUT", "RAG"]
+          context_window: 128000
+          max_output_tokens: 4096
+          max_input_tokens: 100000
+          input_tokens_credit_multiplier_micro: 2000000
+          output_tokens_credit_multiplier_micro: 6000000
+          multiplier_display: "2x"
+          max_num_results: 5
+          max_tool_calls: 2
+          general_config:
+            max_file_size_mb: 25
+            tool_support:
+              web_search: true
+              file_search: true
+              code_interpreter: true
+          preference:
+            is_default: true
+            sort_order: 0
+        - id: "gpt-standard"
+          provider_model_id: "mock-standard"
+          display_name: "Standard"
+          provider_id: "mock"
+          provider_display_name: "Mock"
+          tier: standard
+          enabled: true
+          system_prompt: "You are a standard assistant."
+          multimodal_capabilities: []
+          context_window: 64000
+          max_output_tokens: 2048
+          max_input_tokens: 50000
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 3000000
+          multiplier_display: "1x"
+          max_num_results: 5
+          general_config:
+            tool_support:
+              web_search: true
+              file_search: true
+              code_interpreter: false
+          preference:
+            is_default: false
+            sort_order: 1
+        - id: "gpt-tiny"
+          provider_model_id: "mock-tiny"
+          display_name: "Tiny"
+          provider_id: "mock"
+          tier: standard
+          enabled: true
+          system_prompt: "Tiny."
+          context_window: 2000
+          max_output_tokens: 300
+          max_input_tokens: 1200
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 1000000
+          multiplier_display: "1x"
+        - id: "gpt-off"
+          provider_model_id: "mock-off"
+          display_name: "Disabled"
+          provider_id: "mock"
+          tier: standard
+          enabled: false
+          context_window: 64000
+          max_output_tokens: 2048
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 1000000
+        - id: "gpt-cc"
+          provider_model_id: "mock-cc-model"
+          display_name: "Chat Completions"
+          provider_id: "mockcc"
+          tier: standard
+          enabled: true
+          system_prompt: "CC system."
+          context_window: 64000
+          max_output_tokens: 1000
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 1000000
+          multiplier_display: "1x"
+        - id: "gpt-vllm"
+          provider_model_id: "mock-vllm-model"
+          display_name: "vLLM"
+          provider_id: "mockvllm"
+          tier: standard
+          enabled: true
+          system_prompt: "vLLM system."
+          context_window: 64000
+          max_output_tokens: 1000
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 1000000
+          multiplier_display: "1x"
+        - id: "summary-model"
+          provider_model_id: "mock-summary"
+          display_name: "Summary"
+          provider_id: "mock"
+          tier: standard
+          enabled: true
+          context_window: 64000
+          max_output_tokens: 1000
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 1000000
+          multiplier_display: "1x"
