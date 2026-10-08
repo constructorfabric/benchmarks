@@ -1474,6 +1474,7 @@ dependencies = [
  "cf-gears-authn-resolver-sdk",
  "cf-gears-authz-resolver",
  "cf-gears-authz-resolver-sdk",
+ "cf-gears-mini-chat-sdk",
  "cf-gears-oagw",
  "cf-gears-oagw-sdk",
  "cf-gears-toolkit",
@@ -1491,13 +1492,16 @@ dependencies = [
  "gts",
  "heck 0.5.0",
  "http",
+ "http-body-util",
  "image",
  "inventory",
  "k8s-openapi",
  "kube",
+ "mime",
  "multer",
  "opentelemetry",
  "opentelemetry_sdk",
+ "parking_lot",
  "regex",
  "sea-orm",
  "sea-orm-migration",
@@ -1509,10 +1513,31 @@ dependencies = [
  "time",
  "tokio",
  "tokio-retry",
+ "tokio-stream",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-opentelemetry",
+ "tracing-subscriber",
  "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "cf-gears-mini-chat-sdk"
+version = "0.4.5"
+dependencies = [
+ "async-trait",
+ "cf-gears-toolkit",
+ "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-security",
+ "gts",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
  "uuid",
 ]
 
