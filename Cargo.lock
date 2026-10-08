@@ -1474,6 +1474,7 @@ dependencies = [
  "cf-gears-authn-resolver-sdk",
  "cf-gears-authz-resolver",
  "cf-gears-authz-resolver-sdk",
+ "cf-gears-mini-chat-sdk",
  "cf-gears-oagw",
  "cf-gears-oagw-sdk",
  "cf-gears-toolkit",
@@ -1512,6 +1513,23 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-opentelemetry",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "cf-gears-mini-chat-sdk"
+version = "0.10.26"
+dependencies = [
+ "async-trait",
+ "cf-gears-toolkit",
+ "cf-gears-toolkit-gts",
+ "gts",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
  "utoipa",
  "uuid",
 ]

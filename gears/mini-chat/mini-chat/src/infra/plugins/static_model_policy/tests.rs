@@ -1,0 +1,321 @@
+use mini_chat_sdk::{
+    EstimationBudgets, MiniChatModelPolicyPluginClientV1, MiniChatModelPolicyPluginError,
+    ModelCatalogEntry, ModelGeneralConfig, ModelPreference, ModelTier,
+    models::{
+        ModelApiParams, ModelFeatures, ModelSupportedEndpoints, ModelToolSupport,
+        WebSearchContextSize,
+    },
+};
+use time::OffsetDateTime;
+use uuid::Uuid;
+
+use super::config::StaticMiniChatPolicyPluginConfig;
+use super::service::Service;
+
+fn make_entry(model_id: &str, tier: ModelTier) -> ModelCatalogEntry {
+    ModelCatalogEntry {
+        id: model_id.to_owned(),
+        provider_model_id: format!("{model_id}-v1"),
+        display_name: model_id.to_owned(),
+        description: String::new(),
+        provider_id: "default".to_owned(),
+        provider_display_name: "Default".to_owned(),
+        icon: String::new(),
+        tier,
+        enabled: true,
+        multimodal_capabilities: vec![],
+        context_window: 128_000,
+        max_output_tokens: 16_384,
+        max_input_tokens: 128_000,
+        input_tokens_credit_multiplier_micro: 1_000_000,
+        output_tokens_credit_multiplier_micro: 3_000_000,
+        multiplier_display: "1x".to_owned(),
+        estimation_budgets: EstimationBudgets::default(),
+        max_num_results: 5,
+        web_search_context_size: WebSearchContextSize::Low,
+        max_tool_calls: 2,
+        general_config: ModelGeneralConfig {
+            config_type: String::new(),
+            available_from: OffsetDateTime::UNIX_EPOCH,
+            max_file_size_mb: 25,
+            api_params: ModelApiParams {
+                temperature: Some(0.7),
+                top_p: Some(1.0),
+                frequency_penalty: Some(0.0),
+                presence_penalty: Some(0.0),
+                stop: vec![],
+                extra_body: None,
+                reasoning_effort: None,
+            },
+            features: ModelFeatures {
+                streaming: true,
+                structured_output: true,
+            },
+            tool_support: ModelToolSupport {
+                web_search: false,
+                file_search: false,
+                image_generation: false,
+                code_interpreter: false,
+                mcp: false,
+            },
+            supported_endpoints: ModelSupportedEndpoints {
+                chat_completions: true,
+                responses: false,
+                embeddings: false,
+                image_generation: false,
+                audio_speech_generation: false,
+                audio_transcription: false,
+                audio_translation: false,
+            },
+        },
+        preference: Some(ModelPreference {
+            is_default: false,
+            sort_order: 0,
+        }),
+        system_prompt: String::new(),
+        thread_summary_prompt: String::new(),
+    }
+}
+
+fn test_service() -> Service {
+    let cfg = StaticMiniChatPolicyPluginConfig::default();
+    Service::new(
+        vec![
+            make_entry("standard-model", ModelTier::Standard),
+            make_entry("premium-model", ModelTier::Premium),
+        ],
+        cfg.kill_switches,
+        cfg.default_standard_limits,
+        cfg.default_premium_limits,
+    )
+}
+
+// ── get_current_policy_version ──
+
+#[tokio::test]
+async fn policy_version_echoes_user_id() {
+    let svc = test_service();
+    let user_id = Uuid::new_v4();
+    let info = svc.get_current_policy_version(user_id).await.unwrap();
+
+    assert_eq!(info.user_id, user_id);
+    assert_eq!(info.policy_version, 1);
+}
+
+#[tokio::test]
+async fn policy_version_timestamp_is_recent() {
+    let before = OffsetDateTime::now_utc();
+    let svc = test_service();
+    let info = svc
+        .get_current_policy_version(Uuid::new_v4())
+        .await
+        .unwrap();
+    let after = OffsetDateTime::now_utc();
+
+    assert!(info.generated_at >= before);
+    assert!(info.generated_at <= after);
+}
+
+// ── get_policy_snapshot: version gating ──
+
+#[tokio::test]
+async fn snapshot_version_1_returns_catalog() {
+    let svc = test_service();
+    let user_id = Uuid::new_v4();
+    let snap = svc.get_policy_snapshot(user_id, 1).await.unwrap();
+
+    assert_eq!(snap.user_id, user_id);
+    assert_eq!(snap.policy_version, 1);
+    assert_eq!(snap.model_catalog.len(), 2);
+}
+
+#[tokio::test]
+async fn snapshot_wrong_version_returns_not_found() {
+    let svc = test_service();
+    for version in [0, 2, 100, u64::MAX] {
+        let result = svc.get_policy_snapshot(Uuid::new_v4(), version).await;
+        assert!(
+            matches!(result, Err(MiniChatModelPolicyPluginError::NotFound)),
+            "version {version} should return NotFound"
+        );
+    }
+}
+
+#[tokio::test]
+async fn snapshot_preserves_kill_switch_state() {
+    let mut cfg = StaticMiniChatPolicyPluginConfig::default();
+    cfg.kill_switches.disable_premium_tier = true;
+    cfg.kill_switches.disable_web_search = true;
+
+    let svc = Service::new(
+        cfg.model_catalog,
+        cfg.kill_switches,
+        cfg.default_standard_limits,
+        cfg.default_premium_limits,
+    );
+    let snap = svc.get_policy_snapshot(Uuid::new_v4(), 1).await.unwrap();
+
+    assert!(snap.kill_switches.disable_premium_tier);
+    assert!(snap.kill_switches.disable_web_search);
+    assert!(!snap.kill_switches.force_standard_tier);
+}
+
+#[tokio::test]
+async fn snapshot_contains_both_tiers() {
+    let svc = test_service();
+    let snap = svc.get_policy_snapshot(Uuid::new_v4(), 1).await.unwrap();
+
+    let has_premium = snap
+        .model_catalog
+        .iter()
+        .any(|m| m.tier == ModelTier::Premium);
+    let has_standard = snap
+        .model_catalog
+        .iter()
+        .any(|m| m.tier == ModelTier::Standard);
+
+    assert!(has_premium, "catalog must include a premium model");
+    assert!(has_standard, "catalog must include a standard model");
+}
+
+// ── check_user_license ──
+
+#[tokio::test]
+async fn check_user_license_returns_active() {
+    let svc = test_service();
+    let status = svc.check_user_license(Uuid::new_v4()).await.unwrap();
+
+    assert!(status.active, "static plugin should always return active");
+}
+
+// ── get_user_limits: version gating ──
+
+#[tokio::test]
+async fn user_limits_version_1_returns_configured_limits() {
+    let svc = test_service();
+    let user_id = Uuid::new_v4();
+    let limits = svc.get_user_limits(user_id, 1).await.unwrap();
+
+    assert_eq!(limits.user_id, user_id);
+    assert_eq!(limits.policy_version, 1);
+    assert_eq!(limits.standard.limit_daily_credits_micro, 100_000_000);
+    assert_eq!(limits.standard.limit_monthly_credits_micro, 1_000_000_000);
+    assert_eq!(limits.premium.limit_daily_credits_micro, 50_000_000);
+    assert_eq!(limits.premium.limit_monthly_credits_micro, 500_000_000);
+}
+
+#[tokio::test]
+async fn user_limits_wrong_version_returns_not_found() {
+    let svc = test_service();
+    for version in [0, 2, 100, u64::MAX] {
+        let result = svc.get_user_limits(Uuid::new_v4(), version).await;
+        assert!(
+            matches!(result, Err(MiniChatModelPolicyPluginError::NotFound)),
+            "version {version} should return NotFound"
+        );
+    }
+}
+
+#[tokio::test]
+async fn user_limits_reflect_custom_config() {
+    let mut cfg = StaticMiniChatPolicyPluginConfig::default();
+    cfg.default_standard_limits.limit_daily_credits_micro = 42;
+    cfg.default_premium_limits.limit_monthly_credits_micro = 99;
+
+    let svc = Service::new(
+        cfg.model_catalog,
+        cfg.kill_switches,
+        cfg.default_standard_limits,
+        cfg.default_premium_limits,
+    );
+    let limits = svc.get_user_limits(Uuid::new_v4(), 1).await.unwrap();
+
+    assert_eq!(limits.standard.limit_daily_credits_micro, 42);
+    assert_eq!(limits.premium.limit_monthly_credits_micro, 99);
+}
+
+#[test]
+fn config_rejects_zero_credit_multiplier() {
+    let mut entry = make_entry("m", ModelTier::Standard);
+    let cfg = StaticMiniChatPolicyPluginConfig {
+        model_catalog: vec![entry.clone()],
+        ..StaticMiniChatPolicyPluginConfig::default()
+    };
+    cfg.validate().unwrap();
+
+    entry.output_tokens_credit_multiplier_micro = 0;
+    let cfg = StaticMiniChatPolicyPluginConfig {
+        model_catalog: vec![entry],
+        ..StaticMiniChatPolicyPluginConfig::default()
+    };
+    let err = cfg.validate().unwrap_err();
+    assert!(
+        err.contains("output_tokens_credit_multiplier_micro"),
+        "{err}"
+    );
+}
+
+fn validate_one(entry: ModelCatalogEntry) -> Result<(), String> {
+    StaticMiniChatPolicyPluginConfig {
+        model_catalog: vec![entry],
+        ..StaticMiniChatPolicyPluginConfig::default()
+    }
+    .validate()
+}
+
+#[test]
+fn config_credit_multiplier_bounds() {
+    use crate::domain::service::credit_arithmetic::MAX_MULT;
+    let base = make_entry("m", ModelTier::Standard);
+
+    let mut entry = base.clone();
+    entry.input_tokens_credit_multiplier_micro = MAX_MULT;
+    entry.output_tokens_credit_multiplier_micro = MAX_MULT;
+    validate_one(entry).unwrap();
+
+    for (input, output) in [(MAX_MULT + 1, 1), (1, MAX_MULT + 1), (0, 1)] {
+        let mut entry = base.clone();
+        entry.input_tokens_credit_multiplier_micro = input;
+        entry.output_tokens_credit_multiplier_micro = output;
+        let err = validate_one(entry).unwrap_err();
+        let field = if output == 1 {
+            "input_tokens_credit_multiplier_micro"
+        } else {
+            "output_tokens_credit_multiplier_micro"
+        };
+        assert!(err.contains(field), "{err}");
+    }
+}
+
+#[test]
+fn config_rejects_zero_bytes_per_token() {
+    let mut entry = make_entry("m", ModelTier::Standard);
+    entry.estimation_budgets.bytes_per_token_conservative = 0;
+    let err = validate_one(entry).unwrap_err();
+    assert!(
+        err.contains("estimation_budgets.bytes_per_token_conservative"),
+        "{err}"
+    );
+}
+
+#[test]
+fn config_accepts_partial_kill_switches() {
+    let cfg: StaticMiniChatPolicyPluginConfig = serde_json::from_value(serde_json::json!({
+        "model_catalog": [],
+        "kill_switches": { "disable_images": true }
+    }))
+    .expect("a partial kill_switches object parses");
+    assert!(cfg.kill_switches.disable_images);
+    assert!(!cfg.kill_switches.disable_web_search);
+    assert!(!cfg.kill_switches.force_standard_tier);
+}
+
+#[test]
+fn config_rejects_unknown_kill_switch() {
+    let err = serde_json::from_value::<StaticMiniChatPolicyPluginConfig>(serde_json::json!({
+        "model_catalog": [],
+        "kill_switches": { "disable_image": true }
+    }))
+    .expect_err("a misspelled kill switch is a config error");
+    assert!(err.to_string().contains("disable_image"), "{err}");
+}
