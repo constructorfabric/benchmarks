@@ -31,6 +31,9 @@ authz-resolver-sdk = { workspace = true }
 # OAGW SDK — proxy calls, SSE stream, gateway errors
 oagw-sdk = { workspace = true }
 
+# Mini-chat SDK: models, plugin contracts, usage and audit events
+mini-chat-sdk = { workspace = true }
+
 # Types registry for plugin discovery
 types-registry-sdk = { workspace = true }
 types-registry = { workspace = true }
@@ -69,8 +72,10 @@ utoipa = { workspace = true, features = ["time"] }
 axum = { workspace = true, features = ["macros", "multipart"] }
 http = { workspace = true }
 
-# Time handling
+# Time handling (`chrono` for every stored timestamp, so `SQLite` text matches the
+# values the toolkit OData layer binds for filters and cursors)
 time = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
 
 # UUID support
 uuid = { workspace = true }
@@ -81,6 +86,9 @@ sea-orm-migration = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
+
+# In-process test harness (`mini_chat::testing`)
+tower = { workspace = true, features = ["util"] }
 
 # Metrics / OpenTelemetry
 opentelemetry = { workspace = true }
@@ -98,6 +106,8 @@ toolkit-db-macros = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+toolkit-odata-macros = { workspace = true }
+schemars = { workspace = true }
 heck = { workspace = true }
 secrecy = { workspace = true }
 # k8s leader election (optional, behind k8s feature)
@@ -105,8 +115,11 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
+serde-saphyr = { workspace = true }
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+types-registry-sdk = { workspace = true, features = ["test-util"] }
 
 
