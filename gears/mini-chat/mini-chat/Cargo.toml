@@ -1,0 +1,112 @@
+[package]
+name = "cf-gears-mini-chat"
+description = "mini-chat gear: multi-tenant AI chat"
+version = "0.4.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["constructorfabric", "cf-gears"]
+categories = ["artificial-intelligence"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "mini_chat"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+k8s = ["dep:kube", "dep:k8s-openapi"]
+
+[dependencies]
+# AuthN resolver for S2S client credentials exchange
+authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37", path = "../../system/authn-resolver/authn-resolver-sdk" }
+
+# AuthZ resolver for authorization (PEP flow)
+authz-resolver-sdk = { workspace = true }
+
+# OAGW SDK — proxy calls, SSE stream, gateway errors
+oagw-sdk = { workspace = true }
+
+# Types registry for plugin discovery
+types-registry-sdk = { workspace = true }
+types-registry = { workspace = true }
+authn-resolver = { workspace = true }
+authz-resolver = { workspace = true }
+oagw = { workspace = true }
+
+# Core dependencies
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+inventory = { workspace = true }
+
+# Streaming / async utilities
+tokio-retry = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+regex = { workspace = true }
+multer = "3.1"
+
+# Encoding
+base64 = { workspace = true }
+
+# Image processing (thumbnail generation)
+image = { workspace = true }
+
+# Serde and JSON
+serde = { workspace = true }
+serde_json = { workspace = true }
+utoipa = { workspace = true, features = ["time"] }
+
+# HTTP and REST
+axum = { workspace = true, features = ["macros", "multipart"] }
+http = { workspace = true }
+
+# Time handling
+time = { workspace = true }
+
+# UUID support
+uuid = { workspace = true }
+
+# Database - SeaORM (driver features come from toolkit-db)
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Metrics / OpenTelemetry
+opentelemetry = { workspace = true }
+
+# Local dependencies
+toolkit = { workspace = true }
+toolkit-canonical-errors = { workspace = true, features = ["axum"] }
+toolkit-gts = { workspace = true }
+# Direct dep needed because `gts_instance!` expansions reference
+# `::gts::*` paths (the compile-time `<S as GtsSchema>::SCHEMA_ID` prefix
+# assert plus `GtsInstanceId::new(...)`).
+gts = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite", "pg"] }
+toolkit-db-macros = { workspace = true }
+toolkit-security = { workspace = true }
+toolkit-macros = { workspace = true }
+toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+heck = { workspace = true }
+secrecy = { workspace = true }
+# k8s leader election (optional, behind k8s feature)
+kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], optional = true }
+k8s-openapi = { workspace = true, features = ["latest"], optional = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+temp-env = { workspace = true }
+
+

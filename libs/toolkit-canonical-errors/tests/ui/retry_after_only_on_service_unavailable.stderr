@@ -1,0 +1,9 @@
+error[E0599]: no method named `with_retry_after_seconds` found for struct `ResourceErrorBuilder<Resource, Context>` in the current scope
+ --> tests/ui/retry_after_only_on_service_unavailable.rs:8:10
+  |
+7 |       let _err = CanonicalError::internal("bug")
+  |  ________________-
+8 | |         .with_retry_after_seconds(5)
+  | |         -^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `ResourceErrorBuilder<toolkit_canonical_errors::builder::ResourceAbsent, toolkit_canonical_errors::builder::NoContext>`
+  | |_________|
+  |

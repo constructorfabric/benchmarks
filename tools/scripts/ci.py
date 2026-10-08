@@ -1,0 +1,1027 @@
+#!/usr/bin/env python
+"""Cross-platform Gears CI utility (fmt, clippy, test, security, fuzz, E2E).
+
+For E2E this is the *orchestration engine*: `e2e-local` / `e2e-docker` build (or
+reuse) the server binary, start it from a config file, wait for `/healthz`, run
+pytest against the live HTTP API, then tear the server down. Focused local runs
+are driven by `tools/scripts/run_e2e.py`, which calls this script's
+`e2e-local` subcommand for suites whose `launcher` is `e2e-launcher`.
+
+See `testing/e2e/README.md` ("How E2E Is Executed") for the full picture.
+"""
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
+
+# Add scripts/ to sys.path so lib.platform is importable
+sys.path.insert(0, os.path.dirname(__file__))
+
+from lib.platform import (
+    e2e_env_overrides,
+    find_binary,
+    kill_port_holder,
+    popen_new_group,
+    read_e2e_features,
+    stop_process_tree,
+)
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PYTHON = sys.executable or "python"
+
+
+def run_cmd(cmd, env=None, cwd=None):
+    print(f"> {' '.join(cmd)}")
+    result = subprocess.run(cmd, env=env, cwd=cwd)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+    return result
+
+
+def run_cmd_allow_fail(cmd, env=None, cwd=None):
+    print(f"> {' '.join(cmd)}")
+    return subprocess.run(cmd, env=env, cwd=cwd)
+
+
+def step(msg):
+    print(f"\n== {msg}")
+
+
+def cmd_fmt(args):
+    step("Running cargo fmt")
+    if args.fix:
+        run_cmd(["cargo", "fmt", "--all"])
+        print("Code formatted successfully")
+    else:
+        result = run_cmd_allow_fail(["cargo", "fmt", "--all", "--", "--check"])
+        if result.returncode == 0:
+            print("Code formatting is correct")
+        else:
+            print(
+                "Formatting issues found. Run: python scripts/ci.py fmt --fix"
+            )
+            sys.exit(result.returncode)
+
+
+def cmd_clippy(args):
+    step("Running cargo clippy")
+    if args.fix:
+        run_cmd(
+            [
+                "cargo",
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--fix",
+                "--allow-dirty",
+            ]
+        )
+        print("Clippy issues fixed")
+    else:
+        result = run_cmd_allow_fail(
+            [
+                "cargo",
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ]
+        )
+        if result.returncode == 0:
+            print("No clippy warnings found")
+        else:
+            print(
+                "Clippy warnings found. Run: python scripts/ci.py clippy --fix"
+            )
+            sys.exit(result.returncode)
+
+
+def cmd_test(_args):
+    step("Running cargo test")
+    run_cmd(["cargo", "test", "--workspace"])
+    print("All tests passed")
+
+
+def ensure_tool(binary, install_hint=None):
+    result = run_cmd_allow_fail([binary, "--version"])
+    if result.returncode != 0:
+        msg = f"{binary} is not installed"
+        if install_hint:
+            msg += f". Install with: {install_hint}"
+        print(msg)
+        sys.exit(1)
+
+
+def cmd_audit(_args):
+    step("Running cargo audit")
+    ensure_tool("cargo-audit", "cargo install cargo-audit")
+    run_cmd(["cargo", "audit"])
+    print("No security vulnerabilities found")
+
+
+def cmd_deny(_args):
+    step("Running cargo deny")
+    ensure_tool("cargo-deny", "cargo install cargo-deny")
+    run_cmd(["cargo", "deny", "check"])
+    print("No licensing or dependency issues found")
+
+
+def cmd_security(_args):
+    step("Running security checks (audit + deny)")
+    cmd_audit(_args)
+    cmd_deny(_args)
+    print("All security checks passed")
+
+
+def cmd_gts_docs(args):
+    step("Validating GTS identifiers in documentation files (DE0903)")
+    cmd_args = [
+        "cargo",
+        "run",
+        "-p",
+        "gts-docs-validator",
+        "--",
+        "--exclude",
+        "target/*",
+        "--exclude",
+        "docs/api/*",
+        "docs",
+        "gears",
+        "libs",
+        "examples",
+    ]
+    if getattr(args, 'verbose', False):
+        cmd_args.append("--verbose")  # Append to end, after all other args
+    result = run_cmd_allow_fail(cmd_args)
+    if result.returncode == 0:
+        print("All GTS identifiers in documentation are valid")
+    else:
+        print("Invalid GTS identifiers found in documentation files")
+        sys.exit(result.returncode)
+
+
+_FROM_RE = re.compile(r"(?i)^\s*FROM\s+(.*)$")
+_RUST_TAG_RE = re.compile(r"^rust:([0-9.]+)-")
+
+
+def _check_dockerfile_from_lines(text, channel):
+    """Parse a Dockerfile's FROM lines against `channel`.
+
+    Returns `(errors, warnings)`, each a list of `(lineno, message)` tuples.
+
+    Handles the bits a naive `line.split()[1]` misses:
+      * `FROM builder` / `FROM builder AS runtime` reference an earlier build
+        stage, not a registry image - tracked via `AS <name>` and skipped;
+      * `FROM scratch` is skipped;
+      * leading `--flag` / `--flag=value` tokens (e.g. `--platform=...`) are
+        skipped to find the real ref;
+      * `FROM`/`from` and stage names are matched case-insensitively;
+      * a ref containing `$` (a build-arg substitution, e.g. `$BASE_IMAGE`)
+        cannot be statically verified, so it is reported as a warning instead
+        of an error.
+    """
+    stage_names = set()
+    errors = []
+    warnings = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        m = _FROM_RE.match(line)
+        if not m:
+            continue
+        tokens = m.group(1).split()
+        idx = 0
+        while idx < len(tokens) and tokens[idx].startswith("--"):
+            idx += 1
+        if idx >= len(tokens):
+            continue
+        ref = tokens[idx]
+        stage_name = None
+        if idx + 2 < len(tokens) and tokens[idx + 1].lower() == "as":
+            stage_name = tokens[idx + 2].lower()
+
+        ref_lower = ref.lower()
+        if ref_lower == "scratch" or ref_lower in stage_names:
+            pass
+        elif "$" in ref:
+            warnings.append(
+                (lineno, f"base image ref could not be verified (contains a variable): {ref}")
+            )
+        else:
+            if "@sha256:" not in ref:
+                errors.append((lineno, f"base image is not digest-pinned: {ref}"))
+            rust = _RUST_TAG_RE.match(ref)
+            if rust and rust.group(1) != channel:
+                warnings.append(
+                    (lineno, f"rust {rust.group(1)} != rust-toolchain.toml {channel}")
+                )
+
+        if stage_name:
+            stage_names.add(stage_name)
+
+    return errors, warnings
+
+
+def cmd_docker_pins(_args):
+    """Guard the base-image pins against silent drift.
+
+    Two checks, enforced differently:
+      * every FROM line must be digest-pinned (`@sha256:...`). This is
+        hard-blocking: `.github/dependabot.yml`'s `docker` ecosystem owns
+        these pins and keeps the digest current whenever it bumps the tag,
+        so there is always an automated PR that can turn a red check green.
+      * the Rust version embedded in the image tag (`rust:<ver>-...`) is
+        checked against rust-toolchain.toml's `channel`, but only as a
+        *warning*. The image tag is owned by the `docker` ecosystem and
+        rust-toolchain.toml is owned by the `cargo` ecosystem - two separate
+        Dependabot updaters that do not know about each other, so nothing
+        correlates them. A hard failure here would permanently block the
+        `docker` ecosystem's PRs (no bot could ever satisfy it), and a lane
+        that automation can never pass ends up marked non-required and
+        ignored by everyone - which defeats the point of having it. So a
+        mismatch is surfaced loudly (including as a GitHub Actions
+        annotation in CI) but does not fail the build.
+
+    A warning nobody owns is a warning nobody clears, so the currently
+    outstanding mismatch has an issue of its own: #4917 tracks moving
+    rust-toolchain.toml to 1.98.0, which is blocked on 55 new
+    clippy::unused_async_trait_impl sites across 21 files. When that lands,
+    this check reports 0 warnings again.
+
+    Pure text parsing - no Docker daemon, no network, runs in well under a
+    second, so it can sit on every PR.
+    """
+    step("Checking Docker base-image pins")
+
+    toolchain_path = os.path.join(PROJECT_ROOT, "rust-toolchain.toml")
+    with open(toolchain_path, encoding="utf-8-sig") as fh:
+        m = re.search(r'^\s*channel\s*=\s*"([^"]+)"', fh.read(), re.M)
+    if not m:
+        print(f"ERROR: no [toolchain] channel in {toolchain_path}")
+        sys.exit(1)
+    channel = m.group(1)
+    print(f"rust-toolchain.toml channel: {channel}")
+
+    # Prune rather than filter after the fact: `target/` alone is ~17 GB here, and
+    # os.walk would happily recurse all of it looking for Dockerfiles it cannot
+    # contain.
+    pruned = {".git", ".venv", "node_modules", "target"}
+    dockerfiles = []
+    for root, dirs, files in os.walk(PROJECT_ROOT):
+        dirs[:] = [d for d in dirs if d not in pruned]
+        dockerfiles.extend(
+            os.path.join(root, name) for name in files if name.endswith("Dockerfile")
+        )
+    dockerfiles.sort()
+
+    errors = []
+    warnings = []  # (rel, lineno, message)
+    checked = 0
+    for path in dockerfiles:
+        rel = os.path.relpath(path, PROJECT_ROOT)
+        # .clusterfuzzlite is owned by the OSS-Fuzz base image contract, which
+        # tracks its own upstream tag; it is deliberately out of scope here.
+        if rel.startswith(".clusterfuzzlite"):
+            continue
+        checked += 1
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        file_errors, file_warnings = _check_dockerfile_from_lines(text, channel)
+        errors.extend(f"{rel}:{lineno}: {msg}" for lineno, msg in file_errors)
+        warnings.extend((rel, lineno, msg) for lineno, msg in file_warnings)
+
+    in_github_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    for rel, lineno, msg in warnings:
+        print(f"WARNING: {rel}:{lineno}: {msg}")
+        if in_github_actions:
+            print(f"::warning file={rel},line={lineno}::{msg}")
+
+    if errors:
+        print("ERROR: Docker base-image pin check FAILED")
+        for problem in errors:
+            print(f"  {problem}")
+        sys.exit(1)
+    print(f"OK. {checked} Dockerfile(s) checked, {len(warnings)} warning(s)")
+
+
+def cmd_check(args):
+    step("Running full check suite")
+    cmd_fmt(args)
+    cmd_docker_pins(args)
+    cmd_clippy(args)
+    cmd_test(args)
+    cmd_gts_docs(args)
+    cmd_security(args)
+    print("All checks passed")
+
+
+def cmd_quickstart(_args):
+    step("Starting Gears in quickstart mode")
+    data_dir = os.path.join(PROJECT_ROOT, "data")
+    if not os.path.isdir(data_dir):
+        os.makedirs(data_dir, exist_ok=True)
+        print(f"Created data directory: {data_dir}")
+    run_cmd(
+        [
+            "cargo",
+            "run",
+            "--bin",
+            "cf-gears-server",
+            "--",
+            "--config",
+            "config/quickstart.yaml",
+            "run",
+        ]
+    )
+
+
+def _print_log_file(path, label):
+    if not path or not os.path.isfile(path):
+        return
+    print(f"\n--- {label}: {path} ---")
+    try:
+        if "../" in path or "..\\" in path:
+            raise Exception("Invalid file path")
+        # Logs may contain non-ASCII bytes; force UTF-8 and never let a
+        # decode error mask the server output we are trying to surface
+        # (Python defaults to cp1252 on Windows, which raises on such bytes).
+        with open(path, encoding="utf-8", errors="replace") as f:
+            content = f.read()
+            if content:
+                print(content, end="" if content.endswith("\n") else "\n")
+            else:
+                print("(empty)")
+    except OSError as e:
+        print(f"(failed to read log: {e})")
+    print(f"--- end of {label} ---\n")
+
+
+def wait_for_health(
+    base_url, timeout_secs=30, server_process=None, error_log=None, output_log=None
+):
+    url = f"{base_url.rstrip('/')}/healthz"
+    step(f"Waiting for API to be ready at {url}")
+    start = time.time()
+    attempt = 0
+    while True:
+        # Check if the server process crashed before we even connect
+        if server_process is not None:
+            ret = server_process.poll()
+            if ret is not None:
+                print(f"\nERROR: Server process exited with code {ret}")
+                _print_log_file(output_log, "server stdout")
+                _print_log_file(error_log, "server stderr")
+                print("Fix the error above, rebuild with:")
+                print("  make cargo-build")
+                print("Then re-run: make e2e-local")
+                sys.exit(1)
+
+        try:
+            attempt += 1
+            with urlopen(url, timeout=1) as resp:
+                if 200 <= resp.status < 300:
+                    print(f"API is ready (after {attempt} attempts)")
+                    return
+        except (URLError, HTTPError, ConnectionResetError, OSError) as e:
+            # Server may be starting up or restarting
+            if attempt % 10 == 0:  # Log every 10 attempts
+                print(f"Still waiting... (attempt {attempt}, error: {type(e).__name__})")
+
+        if time.time() - start > timeout_secs:
+            print(f"ERROR: The API readiness check timed out after {attempt} attempts")
+            _print_log_file(output_log, "server stdout")
+            _print_log_file(error_log, "server stderr")
+            sys.exit(1)
+        time.sleep(1)
+
+
+def check_pytest():
+    step("Checking pytest")
+    result = run_cmd_allow_fail([PYTHON, "-m", "pytest", "--version"])
+    if result.returncode != 0:
+        print(
+            "ERROR: pytest is not installed in the active Python environment. Install with: "
+            f"{PYTHON} -m pip install -r testing/e2e/requirements.txt"
+        )
+        sys.exit(1)
+
+    required_modules = ["cryptography"]
+    missing = []
+    for module in required_modules:
+        result = run_cmd_allow_fail([PYTHON, "-c", f"import {module}"])
+        if result.returncode != 0:
+            missing.append(module)
+    if missing:
+        print(
+            "ERROR: missing E2E Python dependencies: "
+            f"{', '.join(missing)}. Install with: "
+            f"{PYTHON} -m pip install -r testing/e2e/requirements.txt"
+        )
+        sys.exit(1)
+
+
+def kill_existing_server(port):
+    """Kill any existing server process on the specified port."""
+    kill_port_holder(int(port))
+
+
+def cmd_e2e(args):
+    base_url = os.environ.get("E2E_BASE_URL", "http://localhost:8086")
+
+    check_pytest()
+
+    # Kill any existing server on the port before starting
+    port = base_url.split(":")[-1]
+    kill_existing_server(port)
+
+    docker_env_started = False
+    server_process = None
+    release_bin = None
+    release_sidecar_bin = None
+    # Pessimistic default. Everything from `docker compose up` onward can leave
+    # the process early - wait_for_health() calls sys.exit() on a readiness
+    # timeout - and the teardown below decides whether to dump the container
+    # logs by reading this value. Starting at 0 would drop the logs on exactly
+    # the failures worth reading.
+    exit_code = 1
+
+    # try/finally, not straight-line code: Python runs `finally` while a
+    # SystemExit propagates, so the compose environment comes down and its logs
+    # come out even when the readiness check exited instead of returning.
+    try:
+        if args.docker:
+            step("Running E2E tests in Docker mode")
+
+            # Check docker
+            result = run_cmd_allow_fail(["docker", "version"])
+            if result.returncode != 0:
+                print("ERROR: docker is not installed or not in PATH")
+                sys.exit(1)
+
+            result = run_cmd_allow_fail(["docker", "compose", "version"])
+            if result.returncode != 0:
+                print("ERROR: 'docker compose' is not available")
+                sys.exit(1)
+
+            # Build image
+            step("Building Docker image for E2E tests")
+            build_cmd = [
+                "docker",
+                "build",
+                "-f",
+                "testing/docker/cf-gears.Dockerfile",
+                "-t",
+                "cf-gears-api:e2e",
+            ]
+
+            # Add build args for cargo features if specified
+            if args.features:
+                build_cmd.extend(["--build-arg", f"CARGO_FEATURES={args.features}"])
+
+            # "release" (default) or "dev". A dev build trades runtime speed for a
+            # much shorter compile, which is what the CI smoke lane wants — the
+            # image is a functional test subject, not a performance subject.
+            build_profile = os.environ.get("E2E_DOCKER_BUILD_PROFILE")
+            if build_profile:
+                build_cmd.extend(["--build-arg", f"BUILD_PROFILE={build_profile}"])
+
+            build_cmd.append(".")
+            run_cmd(build_cmd)
+
+            # Rebuild only the mock service so Python mock server changes are picked up
+            # without overwriting the prebuilt API image (which was built with features).
+            step("Rebuilding docker-compose mock service")
+            run_cmd(
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "testing/docker/docker-compose.yml",
+                    "build",
+                    "mock",
+                ]
+            )
+
+            # Start environment
+            step("Starting E2E docker-compose environment")
+            run_cmd(
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "testing/docker/docker-compose.yml",
+                    "up",
+                    "--force-recreate",
+                    "-d",
+                ]
+            )
+            docker_env_started = True
+
+            # Wait for healthz
+            wait_for_health(base_url)
+        else:
+            step("Running E2E tests in local mode")
+            server_process = None
+            print("Starting cf-gears-server for local E2E...")
+
+            env_e2e_binary = os.environ.get("E2E_SERVER_BINARY") or os.environ.get("E2E_BINARY")
+            env_fs_sidecar_binary = os.environ.get("FS_SIDECAR_BINARY")
+            release_sidecar_bin = None
+
+            if env_e2e_binary:
+                release_bin = env_e2e_binary
+                if not os.path.isfile(release_bin):
+                    print(f"\nERROR: E2E server binary does not exist: {release_bin}")
+                    sys.exit(1)
+            else:
+                step("Building release binary for local E2E")
+                build_cmd = [
+                    "cargo",
+                    "build",
+                    "--release",
+                    "--bin",
+                    "cf-gears-example-server",
+                ]
+                e2e_features = read_e2e_features(Path(PROJECT_ROOT))
+                if e2e_features:
+                    build_cmd.extend(["--features", e2e_features])
+                run_cmd(build_cmd)
+
+                release_bin = str(find_binary(
+                    Path(PROJECT_ROOT) / "target", "release", "cf-gears-example-server"
+                ))
+
+                if not os.path.isfile(release_bin):
+                    print(f"\nERROR: Release binary not found at: {release_bin}")
+                    print("Build it first with:")
+                    print("  make cargo-build")
+                    sys.exit(1)
+
+            if env_fs_sidecar_binary:
+                release_sidecar_bin = env_fs_sidecar_binary
+                if not os.path.isfile(release_sidecar_bin):
+                    print(f"\nERROR: FS_SIDECAR_BINARY does not exist: {release_sidecar_bin}")
+                    sys.exit(1)
+
+            # Create logs directory if it doesn't exist
+            logs_dir = os.path.join(PROJECT_ROOT, "testing", "e2e", "logs")
+            os.makedirs(logs_dir, exist_ok=True)
+
+            data_dir = os.path.join(PROJECT_ROOT, "data")
+            os.makedirs(data_dir, exist_ok=True)
+
+            # Start server in background with logs redirected to files
+            config_path = getattr(args, "config", "config/e2e-local.yaml")
+            server_cmd = [
+                release_bin,
+                "--config",
+                config_path,
+            ]
+
+            server_log_file = os.path.join(logs_dir, "cf-gears-e2e.log")
+            server_error_file = os.path.join(logs_dir, "cf-gears-e2e-error.log")
+
+            with open(server_log_file, "w") as out_file, open(
+                server_error_file, "w"
+            ) as err_file:
+                # Set RUST_LOG to enable debug logging for types_registry module
+                server_env = os.environ.copy()
+                server_env["RUST_LOG"] = "types_registry=debug,info"
+                # Apply per-OS server config overrides (e.g. grpc-hub TCP on
+                # Windows, where the config's UDS address is unsupported).
+                # setdefault keeps any explicit user-provided override.
+                for key, value in e2e_env_overrides().items():
+                    server_env.setdefault(key, value)
+                try:
+                    server_process = popen_new_group(
+                        server_cmd,
+                        stdout=out_file,
+                        stderr=err_file,
+                        env=server_env,
+                    )
+                except OSError as e:
+                    print(f"ERROR: Failed to start cf-gears-server: {e}")
+                    _print_log_file(server_error_file, "server stderr")
+                    sys.exit(1)
+
+            print(f"Started cf-gears-server (pid={server_process.pid})")
+
+            print("Server logs redirected to:")
+            print(f"  - stdout: {server_log_file}")
+            print(f"  - stderr: {server_error_file}")
+            print(
+                "  - application logs: "
+                f"{os.path.join(logs_dir, 'cf-gears-e2e.log')}"
+            )
+            print(f"  - SQL logs: {os.path.join(logs_dir, 'sql.log')}")
+            print(f"  - API logs: {os.path.join(logs_dir, 'api.log')}")
+
+            # Wait for server to be ready, checking for early crash
+            wait_for_health(
+                base_url,
+                timeout_secs=60,
+                server_process=server_process,
+                error_log=server_error_file,
+                output_log=server_log_file,
+            )
+            print("Server started successfully and passed health check")
+
+        # Run pytest
+        step("Running pytest")
+        env = os.environ.copy()
+        env["E2E_BASE_URL"] = base_url
+
+        if release_bin is not None:
+            env.setdefault("FS_E2E_BINARY", release_bin)
+        if release_sidecar_bin is not None:
+            env.setdefault("FS_SIDECAR_BINARY", release_sidecar_bin)
+
+        # Set E2E_DOCKER_MODE flag for the tests to know which mode they're in
+        if args.docker:
+            env["E2E_DOCKER_MODE"] = "1"
+            env.setdefault("E2E_MOCK_UPSTREAM_URL", "http://mock:8080")
+
+        pytest_cmd = [PYTHON, "-m", "pytest", "-vv"]
+        if args.smoke:
+            pytest_cmd.extend(["-m", "smoke"])
+        if args.pytest_args:
+            # argparse.REMAINDER includes the '--' separator if used
+            # We need to strip it so pytest doesn't treat following flags as files
+            extra_args = args.pytest_args
+            if extra_args and extra_args[0] == "--":
+                extra_args = extra_args[1:]
+            if extra_args and not extra_args[0].startswith("-"):
+                pytest_cmd.extend(extra_args)
+            else:
+                pytest_cmd.append("testing/e2e")
+                pytest_cmd.extend(extra_args)
+        else:
+            pytest_cmd.append("testing/e2e")
+
+        result = run_cmd_allow_fail(pytest_cmd, env=env)
+        exit_code = result.returncode
+
+    finally:
+        if args.docker and docker_env_started:
+            # Before `down`, not after: the teardown removes the containers, so a
+            # caller (CI step, human) has nothing left to read once we return.
+            if exit_code != 0:
+                step("Capturing docker-compose logs")
+                run_cmd_allow_fail(
+                    [
+                        "docker",
+                        "compose",
+                        "-f",
+                        "testing/docker/docker-compose.yml",
+                        "logs",
+                        "--no-color",
+                        "--tail=400",
+                    ]
+                )
+
+            step("Stopping E2E docker-compose environment")
+            run_cmd_allow_fail(
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "testing/docker/docker-compose.yml",
+                    "down",
+                    "-v",
+                ]
+            )
+
+        # Stop server if we started it
+        if server_process is not None:
+            step("Stopping cf-gears-server")
+            stop_process_tree(server_process, timeout=10)
+
+    print("")
+    if exit_code == 0:
+        print("E2E tests passed")
+    else:
+        print("E2E tests failed")
+
+    sys.exit(exit_code)
+
+
+def cmd_e2e_local(args):
+    args.docker = False
+    cmd_e2e(args)
+
+
+def cmd_e2e_docker(args):
+    args.docker = True
+    cmd_e2e(args)
+
+
+def ensure_nightly_toolchain():
+    """Ensure Rust nightly toolchain is installed."""
+    result = run_cmd_allow_fail(["rustup", "run", "nightly", "rustc", "--version"])
+    if result.returncode != 0:
+        print(
+            "ERROR: Rust nightly toolchain not installed. "
+            "Install with: rustup toolchain install nightly"
+        )
+        sys.exit(1)
+
+
+def ensure_cargo_fuzz():
+    """Ensure cargo-fuzz is installed."""
+    ensure_nightly_toolchain()
+    result = run_cmd_allow_fail(["cargo", "+nightly", "fuzz", "--version"])
+    if result.returncode != 0:
+        print("Installing cargo-fuzz...")
+        run_cmd(["cargo", "+nightly", "install", "cargo-fuzz"])
+
+
+def cmd_fuzz_build(_args):
+    step("Building fuzz targets")
+    ensure_cargo_fuzz()
+
+    # Build all fuzz targets (no TARGET argument = build all)
+    run_cmd(["cargo", "+nightly", "fuzz", "build", "--fuzz-dir", "tools/fuzz"], cwd=PROJECT_ROOT)
+    print("All fuzz targets built successfully")
+
+
+def cmd_fuzz_list(_args):
+    step("Listing fuzz targets")
+    ensure_cargo_fuzz()
+
+    run_cmd(["cargo", "+nightly", "fuzz", "list", "--fuzz-dir", "tools/fuzz"], cwd=PROJECT_ROOT)
+
+
+def cmd_fuzz_run(args):
+    step(f"Running fuzz target: {args.target}")
+    ensure_cargo_fuzz()
+
+    fuzz_seconds = args.seconds or 60
+    if fuzz_seconds <= 0:
+        print("ERROR: --seconds must be a positive integer")
+        sys.exit(1)
+    fuzz_cmd = [
+        "cargo", "+nightly", "fuzz", "run", "--fuzz-dir", "tools/fuzz", args.target,
+        "--", f"-max_total_time={fuzz_seconds}"
+    ]
+
+    result = run_cmd_allow_fail(fuzz_cmd, cwd=PROJECT_ROOT)
+
+    if result.returncode != 0:
+        print(f"Fuzzing found issues. Check tools/fuzz/artifacts/{args.target}/")
+        sys.exit(result.returncode)
+
+    print(f"Fuzzing completed successfully ({fuzz_seconds}s)")
+
+
+def cmd_fuzz(args):
+    step("Running smoke test fuzzing on all targets")
+
+    # Build all targets first
+    cmd_fuzz_build(args)
+
+    # Get list of targets
+    result = subprocess.run(
+        ["cargo", "+nightly", "fuzz", "list", "--fuzz-dir", "tools/fuzz"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        print("Failed to list fuzz targets")
+        sys.exit(1)
+
+    targets = result.stdout.strip().split('\n')
+    smoke_time = args.seconds or 30
+    if smoke_time <= 0:
+        print("ERROR: --seconds must be a positive integer")
+        sys.exit(1)
+
+    failed_targets = []
+
+    for target in targets:
+        target = target.strip()
+        if not target:
+            continue
+
+        print(f"\n=== Fuzzing {target} for {smoke_time}s ===")
+        fuzz_cmd = [
+            "cargo", "+nightly", "fuzz", "run", "--fuzz-dir", "tools/fuzz", target,
+            "--", f"-max_total_time={smoke_time}"
+        ]
+
+        result = run_cmd_allow_fail(fuzz_cmd, cwd=PROJECT_ROOT)
+
+        if result.returncode != 0:
+            failed_targets.append(target)
+            print(f"❌ {target} found issues")
+        else:
+            print(f"✅ {target} passed")
+
+    if failed_targets:
+        print(f"\n❌ Fuzzing found issues in: {', '.join(failed_targets)}")
+        print("Check tools/fuzz/artifacts/ for crash details")
+        sys.exit(1)
+
+    print(f"\n✅ All fuzz targets passed ({smoke_time}s each)")
+
+
+def cmd_fuzz_clean(_args):
+    step("Cleaning fuzzing artifacts")
+    fuzz_dir = os.path.join(PROJECT_ROOT, "tools/fuzz")
+
+    artifacts_dir = os.path.join(fuzz_dir, "artifacts")
+    corpus_dir = os.path.join(fuzz_dir, "corpus")
+    target_dir = os.path.join(fuzz_dir, "target")
+
+    for d in [artifacts_dir, target_dir]:
+        if os.path.exists(d):
+            shutil.rmtree(d)
+            print(f"Removed {d}")
+
+    # Clean corpus but keep .gitkeep files
+    if os.path.exists(corpus_dir):
+        for item in os.listdir(corpus_dir):
+            item_path = os.path.join(corpus_dir, item)
+            if os.path.isdir(item_path):
+                # Remove contents but keep the directory and .gitkeep
+                for subitem in os.listdir(item_path):
+                    if subitem != ".gitkeep":
+                        subitem_path = os.path.join(item_path, subitem)
+                        if os.path.isfile(subitem_path):
+                            os.remove(subitem_path)
+                        elif os.path.isdir(subitem_path):
+                            shutil.rmtree(subitem_path)
+
+    print("Fuzzing artifacts cleaned")
+
+
+def cmd_all(args):
+    step("Running full build and testing pipeline")
+    cmd_check(args)
+    step("Running SQLite integration tests")
+    run_cmd(
+        [
+            "cargo",
+            "test",
+            "-p",
+            "toolkit-db",
+            "--features",
+            "sqlite,integration",
+            "--",
+            "--nocapture",
+        ]
+    )
+    step("Building release (stable)")
+    run_cmd(["cargo", "+stable", "build", "--release"])
+    step("Running e2e-local")
+    cmd_e2e(argparse.Namespace(docker=False, smoke=False, pytest_args=[]))
+    print("All (full pipeline) completed")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Gears CI utility (Python, cross-platform)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # fmt
+    p_fmt = subparsers.add_parser("fmt", help="Check or fix code formatting")
+    p_fmt.add_argument("--fix", action="store_true", help="Auto-format code")
+    p_fmt.set_defaults(func=cmd_fmt)
+
+    # clippy
+    p_clippy = subparsers.add_parser("clippy", help="Run clippy lints")
+    p_clippy.add_argument("--fix", action="store_true", help="Auto-fix clippy issues")
+    p_clippy.set_defaults(func=cmd_clippy)
+
+    # test
+    p_test = subparsers.add_parser("test", help="Run unit tests")
+    p_test.set_defaults(func=cmd_test)
+
+    # audit
+    p_audit = subparsers.add_parser("audit", help="Run cargo audit")
+    p_audit.set_defaults(func=cmd_audit)
+
+    # deny
+    p_deny = subparsers.add_parser("deny", help="Run cargo deny checks")
+    p_deny.set_defaults(func=cmd_deny)
+
+    # security
+    p_sec = subparsers.add_parser("security", help="Run security checks (audit + deny)")
+    p_sec.set_defaults(func=cmd_security)
+
+    # check
+    p_check = subparsers.add_parser("check", help="Run full check suite (fmt + clippy + test + security)")
+    p_check.add_argument("--fix", action="store_true", help="Auto-fix formatting and clippy issues")
+    p_check.set_defaults(func=cmd_check)
+
+    # quickstart
+    p_qs = subparsers.add_parser("quickstart", help="Start server in quickstart mode")
+    p_qs.set_defaults(func=cmd_quickstart)
+
+    # e2e-local
+    p_e2e_local = subparsers.add_parser("e2e-local", help="Run end-to-end tests in local mode")
+    p_e2e_local.add_argument(
+        "--features",
+        default="users-info-example",
+        help="Ignored in local mode (kept for CLI parity)",
+    )
+    p_e2e_local.add_argument(
+        "--config",
+        default="config/e2e-local.yaml",
+        help="Path to server config file",
+    )
+    p_e2e_local.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Run only tests marked with @pytest.mark.smoke",
+    )
+    p_e2e_local.add_argument(
+        "pytest_args",
+        nargs=argparse.REMAINDER,
+        help="Extra arguments passed to pytest (use -- to separate)",
+    )
+    p_e2e_local.set_defaults(func=cmd_e2e_local)
+
+    # e2e-docker
+    p_e2e_docker = subparsers.add_parser("e2e-docker", help="Run end-to-end tests in Docker mode")
+    p_e2e_docker.add_argument(
+        "--features",
+        default=read_e2e_features(Path(PROJECT_ROOT)),
+        help=(
+            "Cargo features to enable for Docker build "
+            "(default: from config/e2e-features.txt)"
+        ),
+    )
+    p_e2e_docker.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Run only tests marked with @pytest.mark.smoke",
+    )
+    p_e2e_docker.add_argument(
+        "pytest_args",
+        nargs=argparse.REMAINDER,
+        help="Extra arguments passed to pytest (use -- to separate)",
+    )
+    p_e2e_docker.set_defaults(func=cmd_e2e_docker)
+
+    # fuzz-build
+    p_fuzz_build = subparsers.add_parser("fuzz-build", help="Build all fuzz targets")
+    p_fuzz_build.set_defaults(func=cmd_fuzz_build)
+
+    # fuzz-list
+    p_fuzz_list = subparsers.add_parser("fuzz-list", help="List all fuzz targets")
+    p_fuzz_list.set_defaults(func=cmd_fuzz_list)
+
+    # fuzz-run
+    p_fuzz_run = subparsers.add_parser("fuzz-run", help="Run specific fuzz target")
+    p_fuzz_run.add_argument("target", help="Name of fuzz target to run")
+    p_fuzz_run.add_argument("--seconds", type=int, help="Fuzzing duration in seconds (default: 60)")
+    p_fuzz_run.set_defaults(func=cmd_fuzz_run)
+
+    # fuzz
+    p_fuzz = subparsers.add_parser("fuzz", help="Run smoke test fuzzing on all targets")
+    p_fuzz.add_argument("--seconds", type=int, default=30, help="Seconds per target (default: 30)")
+    p_fuzz.set_defaults(func=cmd_fuzz)
+
+    # fuzz-clean
+    p_fuzz_clean = subparsers.add_parser("fuzz-clean", help="Clean fuzzing artifacts")
+    p_fuzz_clean.set_defaults(func=cmd_fuzz_clean)
+
+    # cfs-validate
+    p_docker_pins = subparsers.add_parser(
+        "docker-pins",
+        help="Check Dockerfile base images are digest-pinned and match rust-toolchain.toml",
+    )
+    p_docker_pins.set_defaults(func=cmd_docker_pins)
+
+    # gts-docs
+    p_gts_docs = subparsers.add_parser("gts-docs", help="Validate GTS identifiers in .md and .json files (DE0903)")
+    p_gts_docs.add_argument("-v", "--verbose", action="store_true", help="Show verbose output")
+    p_gts_docs.set_defaults(func=cmd_gts_docs)
+
+    # all
+    p_all = subparsers.add_parser("all", help="Run full pipeline (Makefile all equivalent)")
+    p_all.add_argument("--fix", action="store_true", help="Auto-fix formatting/clippy")
+    p_all.set_defaults(func=cmd_all)
+
+    return parser
+
+
+def main():
+    os.chdir(PROJECT_ROOT)
+    parser = build_parser()
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

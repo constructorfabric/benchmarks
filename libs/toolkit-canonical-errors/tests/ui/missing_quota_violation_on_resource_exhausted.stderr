@@ -1,0 +1,13 @@
+error[E0599]: the method `create` exists for struct `ResourceErrorBuilder<toolkit_canonical_errors::builder::ResourceOptional, toolkit_canonical_errors::builder::NeedsQuotaViolation>`, but its trait bounds were not satisfied
+  --> tests/ui/missing_quota_violation_on_resource_exhausted.rs:10:72
+   |
+10 |     let _err = UserResourceError::resource_exhausted("Quota exceeded").create();
+   |                                                                        ^^^^^^ method cannot be called due to unsatisfied trait bounds
+   |
+  ::: src/builder.rs
+   |
+   | pub struct NeedsQuotaViolation;
+   | ------------------------------ doesn't satisfy `_: ContextResolved`
+   |
+   = note: the following trait bounds were not satisfied:
+           `toolkit_canonical_errors::builder::NeedsQuotaViolation: toolkit_canonical_errors::builder::ContextResolved`

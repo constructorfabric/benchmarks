@@ -1,0 +1,77 @@
+use sea_orm::{ColumnTrait, Condition, EntityTrait, ExprTrait, sea_query::Expr};
+
+use crate::secure::{AccessScope, ScopableEntity};
+use toolkit_security::pep_properties;
+
+/// Provides tenant filtering logic for scoped queries.
+///
+/// This trait abstracts the tenant filtering mechanism, allowing for future
+/// enhancements like hierarchical tenant structures ("effective tenants")
+/// without changing calling code.
+///
+/// # Current Implementation
+///
+/// `SimpleTenantFilter` uses direct `tenant_id IN (...)` filtering.
+///
+/// # Future Enhancement
+///
+/// A `HierarchicalTenantFilter` could query "effective tenant IDs" from
+/// a tenant hierarchy service and expand the filter accordingly.
+pub trait TenantFilterProvider {
+    /// Build a condition for tenant filtering based on the scope.
+    ///
+    /// Returns:
+    /// - `None` if no tenant filtering needed (no tenant IDs in scope)
+    /// - `Some(deny_all)` if entity has no tenant column but tenants requested
+    /// - `Some(filter)` with appropriate tenant IN clause
+    fn tenant_condition<E>(scope: &AccessScope) -> Option<Condition>
+    where
+        E: ScopableEntity + EntityTrait,
+        E::Column: ColumnTrait + Copy;
+}
+
+/// Simple tenant filter using direct IN clause.
+///
+/// This is the v1 implementation that filters by:
+/// `tenant_id IN (scope.tenant_ids)`
+///
+/// # Future
+///
+/// Can be replaced with a hierarchical provider that expands
+/// `tenant_ids` to include child tenants.
+pub struct SimpleTenantFilter;
+
+impl TenantFilterProvider for SimpleTenantFilter {
+    fn tenant_condition<E>(scope: &AccessScope) -> Option<Condition>
+    where
+        E: ScopableEntity + EntityTrait,
+        E::Column: ColumnTrait + Copy,
+    {
+        let tenant_ids = scope.all_uuid_values_for(pep_properties::OWNER_TENANT_ID);
+
+        // No tenant IDs in scope → no tenant filter
+        if tenant_ids.is_empty() {
+            return None;
+        }
+
+        // Entity has no tenant column but tenant IDs requested → deny all
+        let Some(tcol) = E::tenant_col() else {
+            return Some(Condition::all().add(Expr::value(false)));
+        };
+
+        // Build tenant IN filter
+        Some(Condition::all().add(Expr::col(tcol).is_in(tenant_ids)))
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_trait_compiles() {
+        let scope = AccessScope::default();
+        assert!(scope.is_deny_all());
+    }
+}

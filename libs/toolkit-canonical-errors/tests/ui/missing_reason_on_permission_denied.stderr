@@ -1,0 +1,13 @@
+error[E0599]: the method `create` exists for struct `ResourceErrorBuilder<toolkit_canonical_errors::builder::ResourceAbsent, toolkit_canonical_errors::builder::NeedsReason>`, but its trait bounds were not satisfied
+  --> tests/ui/missing_reason_on_permission_denied.rs:10:55
+   |
+10 |     let _err = UserResourceError::permission_denied().create();
+   |                                                       ^^^^^^ method cannot be called due to unsatisfied trait bounds
+   |
+  ::: src/builder.rs
+   |
+   | pub struct NeedsReason;
+   | ---------------------- doesn't satisfy `_: ContextResolved`
+   |
+   = note: the following trait bounds were not satisfied:
+           `toolkit_canonical_errors::builder::NeedsReason: toolkit_canonical_errors::builder::ContextResolved`

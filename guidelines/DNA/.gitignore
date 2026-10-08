@@ -1,0 +1,83 @@
+# ------------------------------------------------------
+# Core build outputs (for static site generators)
+# ------------------------------------------------------
+_site/
+build/
+dist/
+public/
+out/
+.cache/
+.next/
+.docusaurus/
+.vuepress/
+.mkdocs/
+.sphinx/
+site/
+docs/.vitepress/cache/
+
+# ------------------------------------------------------
+# Node / npm / yarn / pnpm dependencies
+# ------------------------------------------------------
+node_modules/
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+
+# ------------------------------------------------------
+# Python virtual envs / Sphinx / MkDocs / Jupyter
+# ------------------------------------------------------
+venv/
+.env/
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/
+*.egg-info/
+
+# ------------------------------------------------------
+# Temporary / local files
+# ------------------------------------------------------
+.tmp/
+temp/
+*.log
+*.bak
+*.swp
+*.swo
+*.tmp
+Thumbs.db
+
+# ------------------------------------------------------
+# IDEs and Editors
+# ------------------------------------------------------
+.vscode/
+.idea/
+*.iml
+
+# ------------------------------------------------------
+# OS Files
+# ------------------------------------------------------
+.DS_Store
+ehthumbs.db
+Icon?
+Desktop.ini
+
+# ------------------------------------------------------
+# Miscellaneous
+# ------------------------------------------------------
+*.local
+*.cache
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+
+# ------------------------------------------------------
+# Optional: build artifacts from documentation tools
+# ------------------------------------------------------
+# If using docs-as-code toolchains like:
+# - Docusaurus: /build or /.docusaurus
+# - MkDocs: /site
+# - VitePress: /docs/.vitepress/dist
+# - Hugo: /public
+# - Sphinx: /_build
+# - Jekyll: /_site

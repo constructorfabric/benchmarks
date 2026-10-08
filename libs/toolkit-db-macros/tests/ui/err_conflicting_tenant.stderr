@@ -1,0 +1,5 @@
+error: secure: specify either `tenant_col` or `no_tenant`, not both
+ --> tests/ui/err_conflicting_tenant.rs:8:5
+  |
+8 |     no_tenant,
+  |     ^^^^^^^^^

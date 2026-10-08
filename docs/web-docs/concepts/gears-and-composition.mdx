@@ -1,0 +1,70 @@
+---
+title: Gears & composition
+description: What a gear is, the three-tier hierarchy, the SDK facade+backend pattern, and ClientHub.
+sidebar:
+  label: Gears and composition
+  order: 2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## What is a gear?
+
+A **gear** is a vertically-sliced, self-contained capability. Each gear:
+
+- **owns its public API** through an SDK crate (`<name>-sdk`) — transport-agnostic traits,
+  models, and errors;
+- **owns its data** behind a secure ORM layer (no raw connections);
+- **is discovered at link time** and initialized in dependency order by the runtime;
+- **composes** with other gears through the typed `ClientHub` (in-process) or gRPC
+  (out-of-process), behind the same SDK trait;
+- **is extensible** through plugins and the [Global Type System](https://github.com/GlobalTypeSystem/gts-rust).
+
+## The three-tier hierarchy
+
+Gears are organized into exactly three tiers, with a one-way dependency direction:
+
+```text
+Service gears   (gears/)          business capabilities
+      │  depend on
+      ▼
+System gears    (gears/system/)   control plane: gateway, authn/authz, tenancy, …
+      │  depend on
+      ▼
+Toolkit         (libs/)           runtime substrate: REST, DB, security, observability
+```
+
+- **Toolkit** (`libs/`) — the low-level substrate: API middleware, DB access, error
+  definitions, transport, security primitives, observability, and macros.
+- **System gears** (`gears/system/`) — the control plane (API gateway, authn/authz
+  resolvers, tenant resolver, type registry, …). They are ordinary gears, so they can be
+  replaced.
+- **Service gears** (`gears/`) — your business capabilities, built on the platform.
+
+Adding a gear never requires editing a central switchboard — dependency ordering is a
+platform guarantee, not an application convention.
+
+## In-process vs out-of-process
+
+The **same gear** can run two ways, chosen by configuration rather than code:
+
+- **In-process** — the gear is compiled into the host binary and resolved through
+  `ClientHub` as a direct call.
+- **Out-of-process** — the gear runs as its own service; consumers get a gRPC client that
+  implements the very same SDK trait.
+
+This is what lets one codebase deploy as a single node, as multiple processes, or as
+Kubernetes services.
+
+## Contracts, composition, and extension
+
+Three mechanisms make composition work, each with its own page:
+
+- **[SDK contracts and ClientHub](../sdk-and-clienthub/)** — the facade-trait pattern and how gears resolve each other in-process or over gRPC behind the same trait.
+- **[Plugins and extension points](../plugins-and-extension-points/)** — how a gear accepts multiple replaceable implementations behind a stable surface.
+- **[Runtime and lifecycle](../runtime-and-lifecycle/)** — how gears are discovered and initialized in dependency order.
+
+<Aside type="tip">
+Build it yourself: the [first-gear walkthrough](../../build-with-gears/your-first-gear/) defines an SDK,
+a backend, and `ClientHub` registration against real code.
+</Aside>

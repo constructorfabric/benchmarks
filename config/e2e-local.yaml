@@ -1,0 +1,659 @@
+# Updated: 2026-04-16 by Constructor Tech
+# CF/Gears Server Configuration
+#
+# Database Architecture Overview:
+# ===============================
+#
+# CF/Gears uses a centralized DbManager that:
+# 1. Loads global database server templates from `database.servers`
+# 2. For each gear, merges server template with gear-specific overrides
+# 3. Creates isolated database connections per gear
+# 4. Caches DbHandle instances for reuse within the same gear
+#
+# Key principles:
+# - Each gear gets its own database connection (no sharing)
+# - SQLite gears automatically get their own database file
+# - Configuration follows a clear precedence hierarchy
+# - Environment variables are expanded (${VAR_NAME})
+# - All paths are resolved relative to server.home_dir
+
+# Core server configuration (global section)
+server:
+  home_dir: "~/.cf-gears"
+
+# Database configuration (DbManager architecture)
+#
+# The database config has two levels:
+# 1. Global "servers" - shared connection templates that gears can reference
+# 2. Per-gear configs - specific database settings for each gear
+#
+# Configuration precedence (highest to lowest):
+# - Gear `params` map (highest priority)
+# - Gear DSN query params
+# - Gear fields (host, port, user, etc.)
+# - Gear DSN base
+# - Server `params` map
+# - Server DSN query params
+# - Server fields
+# - Server DSN base (lowest priority)
+#
+database:
+  # Global database servers - reusable connection templates
+  # These define shared settings that multiple gears can inherit
+  servers:
+    # SQLite server template for user data gears
+    # Note: No DSN or file specified here - gears specify their own database files
+    # This prevents accidental sharing of SQLite databases between gears
+    sqlite_users:
+      engine: "sqlite"
+      # SQLite PRAGMA parameters applied to all connections using this server
+      params:
+        WAL: "true"              # Enable Write-Ahead Logging for better concurrency
+        synchronous: "NORMAL"    # Balance between safety and performance
+        busy_timeout: "5000"     # Wait 5 seconds for locked database
+      # Connection pool settings shared by all gears using this server
+      pool:
+        max_conns: 5             # Maximum 5 concurrent connections
+        acquire_timeout: "30s"   # Timeout when acquiring connection from pool
+
+  # Global database options
+  # auto_provision: true       # (default) Create directories automatically for SQLite files
+  # auto_provision: false      # Fail if directories don't exist
+
+# Logging configuration (global section)
+logging:
+  # global section
+  default:
+    console_level: info
+    file: "logs/cf-gears-e2e.log"
+    file_level: info
+    max_age_days: 28
+    max_backups: 3
+    max_size_mb: 10
+  sqlx:
+    console_level: debug
+    file: "logs/sql.log"
+    file_level: debug
+  api-gateway:
+    console_level: debug
+    file: "logs/api.log"
+    file_level: debug
+    max_age_days: 28
+    max_backups: 3
+    max_size_mb: 100
+  types-registry:
+    console_level: info
+    file: "logs/types_registry.log"
+    file_level: debug
+    max_age_days: 7
+    max_backups: 3
+    max_size_mb: 50
+
+
+# Per-gear configurations using new structure
+gears:
+  api-gateway:
+    # No database needed for api-gateway
+    config:
+      bind_addr: "0.0.0.0:8086"
+      enable_docs: true
+      cors_enabled: false
+
+      # OpenAPI Documentation Configuration
+      openapi:
+        title: "CF/Gears Server API"
+        version: "0.1.0"
+        description: "CF/Gears Server API Documentation"
+      defaults:
+        body_limit_bytes: 64000000
+
+      # Authentication Configuration
+      auth_disabled: false
+      require_auth_by_default: true
+
+      # Throttling zones referenced by the mini-chat create_chat route
+      # These must be defined or gateway startup fails validation.
+      rate_limit_zones:
+        rl_mini_chat_chat:
+          rate_limit: 10/s
+          burst_limit: 10
+          response_status_code: 429
+          response_retry_after: auto
+          key:
+            type: ip
+          max_keys: 10000
+      in_flight_limit_zones:
+        ifl_mini_chat_chat:
+          in_flight_limit: 100
+          backlog_limit: 0
+          backlog_timeout: 0s
+          response_status_code: 429
+          key:
+            type: ip
+          max_keys: 10000
+
+  # --- Tenant Resolver example (gateway + plugins) ---
+  types-registry:
+    database:
+      server: "sqlite_users"
+      file: "types_registry.db"
+    config:
+      # AM registers the platform-root tenant type through the process-local
+      # Types Registry client during startup. This customer type remains
+      # deployment-owned E2E data used by the AM suite for children under the
+      # platform root. It allows nesting under either the platform root or
+      # another customer so the suite can build multi-level hierarchies for
+      # metadata-inheritance tests.
+      entities:
+        - $id: "gts://gts.cf.core.am.tenant_type.v1~cf.core.am.customer.v1~"
+          # JSON Schema dialect (NOT the parent type — derivation is encoded
+          # by the `~`-chain in `$id`). gts 0.10.0 trait validation compiles
+          # `x-gts-traits` under this dialect, so it must be a real meta-schema;
+          # the base envelope is authored in draft-07.
+          $schema: "http://json-schema.org/draft-07/schema#"
+          description: "Customer tenant under the platform root (E2E)."
+          type: "object"
+          allOf:
+            - $ref: "gts://gts.cf.core.am.tenant_type.v1~"
+          x-gts-traits:
+            allowed_parent_types:
+              - "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+              - "gts.cf.core.am.tenant_type.v1~cf.core.am.customer.v1~"
+            idp_provisioning: false
+
+  static-tr-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 20
+      tenants:
+        # Root tenant used by oagw + credstore e2e tests. The tenant tree has
+        # exactly one root; the hierarchy sub-root below hangs off this anchor.
+        - id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          name: "e2e-root"
+          parent_id: null
+          status: active
+        # Hierarchy sub-root
+        - id: "00000000-0000-0000-0000-000000000001"
+          name: "hierarchy-root"
+          parent_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          status: active
+        - id: "00000000-0000-0000-0000-000000000002"
+          name: "hierarchy-l1a"
+          parent_id: "00000000-0000-0000-0000-000000000001"
+          status: active
+        - id: "00000000-0000-0000-0000-000000000005"
+          name: "hierarchy-l1b"
+          parent_id: "00000000-0000-0000-0000-000000000001"
+          status: active
+        - id: "00000000-0000-0000-0000-000000000003"
+          name: "hierarchy-l2a-deleted"
+          parent_id: "00000000-0000-0000-0000-000000000002"
+          status: deleted
+        - id: "00000000-0000-0000-0000-000000000004"
+          name: "hierarchy-l2b"
+          parent_id: "00000000-0000-0000-0000-000000000002"
+          status: active
+        - id: "00000000-0000-0000-0000-000000000006"
+          name: "hierarchy-l2c"
+          parent_id: "00000000-0000-0000-0000-000000000005"
+          status: active
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  settings-service:
+    database:
+      server: "sqlite_users"
+      file: "settings-service.db"
+    # The empty section is deliberate and required. The gear reads its
+    # configuration fail-closed, so an absent `config:` key aborts startup
+    # rather than defaulting: bootstrap values are deployment-owned and are
+    # never themselves managed settings, so there is nothing to fall back to.
+    config: {}
+
+  credstore:
+    database:
+      server: "sqlite_users"
+      file: "credstore.db"
+    config:
+      # Gateway selects its value-store backend plugin by GTS vendor;
+      # must match static-credstore-plugin (default "constructorfabric").
+      vendor: "constructorfabric"
+
+  static-credstore-plugin:
+    config:
+      secrets:
+        # Test-only fake client ID, not a real credential
+        - tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          owner_id: "11111111-6a88-4768-9dfc-6bcd5187d9ed"
+          key: "openai-key"
+          value: "sk-test-e2e-fake-key"
+        # Test-only fake credentials for OAuth2 client ID and secret
+        - tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          owner_id: "11111111-6a88-4768-9dfc-6bcd5187d9ed"
+          key: "test-oauth2-client-id"
+          value: "test-client-id"
+        # Test-only fake client secret, not a real credential
+        - tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          owner_id: "11111111-6a88-4768-9dfc-6bcd5187d9ed"
+          key: "test-oauth2-client-secret"
+          value: "test-client-secret"
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/cf-gears-grpc-e2e"
+
+  users-info:
+    # Gear-specific database configuration
+    database:
+      # Reference to global server template defined above
+      server: "sqlite_users"               # Inherits params and pool settings from sqlite_users
+
+      # Gear-specific database file (required for SQLite gears)
+      file: "users_info.db"                # Creates: ~/.cf-gears/users_info/users_info.db
+
+      # Gear can override server settings:
+      # params:
+      #   synchronous: "FULL"              # Would override server's "NORMAL" setting
+      #   custom_pragma: "value"           # Would add new PRAGMA setting
+      # pool:
+      #   max_conns: 10                    # Would override server's max_conns: 5
+
+      # Alternative ways to specify database location:
+      # path: "/absolute/path/to/db.sqlite" # Use absolute path instead of file
+      # dsn: "sqlite://custom.db?WAL=false" # Complete DSN override (ignores server)
+
+      # For other database types (PostgreSQL, MySQL):
+      # host: "localhost"                  # Override server host
+      # port: 5432                         # Override server port
+      # user: "app_user"                   # Override server user
+      # password: "${DB_PASSWORD}"         # Environment variable expansion
+      # dbname: "users_db"                 # Override server database name
+
+    # Gear-specific application configuration
+    config:
+      default_page_size: 5
+      max_page_size: 100
+
+  authz-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      mode: static_tokens
+      tokens:
+        - token: "e2e-token-tenant-a"
+          identity:
+            subject_id: "11111111-6a88-4768-9dfc-6bcd5187d9ed"
+            subject_tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+            # A real AuthN resolver always sets a subject_type; some gears
+            # (e.g. bss-ledger) require its presence. Additive — gears that do
+            # not check it are unaffected.
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+            token_scopes: ["*"]
+        # A SECOND principal inside tenant A. Same tenant, different subject —
+        # which is the only shape that can exercise a two-person rule, because
+        # bss-pricing's `chk_pricing_approval_distinct_principals` compares
+        # principal IDENTITIES and everything else in this file is either the
+        # same subject or a different tenant. Without it the approval workflow's
+        # positive arm is unreachable end to end: the submitter's own approve is
+        # refused SELF_APPROVAL_FORBIDDEN, and tenant B cannot see the record at
+        # all. Additive — no existing token or test reads it.
+        - token: "e2e-token-tenant-a-reviewer"
+          identity:
+            subject_id: "44444444-6a88-4768-9dfc-6bcd5187d9ed"
+            subject_tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+            token_scopes: ["*"]
+        # Hierarchy tenant tokens — used by budget allocation e2e tests
+        - token: "e2e-token-hierarchy-root"
+          identity:
+            subject_id: "22222222-0000-0000-0000-000000000001"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+        - token: "e2e-token-hierarchy-l1a"
+          identity:
+            subject_id: "22222222-0000-0000-0000-000000000002"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000002"
+            token_scopes: ["*"]
+        - token: "e2e-token-hierarchy-l1b"
+          identity:
+            subject_id: "22222222-0000-0000-0000-000000000005"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000005"
+            token_scopes: ["*"]
+        - token: "e2e-token-tenant-b"
+          identity:
+            subject_id: "22222222-6a88-4768-9dfc-6bcd5187d9ed"
+            subject_tenant_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            # As on tenant A: a real AuthN resolver always sets a subject_type,
+            # and the gears that check it (bss-ledger, bss-pricing) refuse a
+            # context without one with 401 - before their PEP gate. Without this
+            # line the cross-tenant isolation tests read as "not authenticated"
+            # rather than as "authenticated and out of scope", which is the one
+            # thing they exist to tell apart. Additive; gears that do not check
+            # it are unaffected.
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+            token_scopes: ["*"]
+        # Nil-tenant token: static-authz denies requests with the nil UUID
+        # tenant, producing a clean 403 Forbidden. Used by
+        # testing/e2e/suites/oagw/test_authz.py::test_proxy_authz_forbidden_nil_tenant
+        - token: "e2e-token-nil-tenant"
+          identity:
+            subject_id: "33333333-6a88-4768-9dfc-6bcd5187d9ed"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000000"
+            token_scopes: ["*"]
+      s2s_credentials:
+        - client_id: "mini-chat"
+          client_secret: "mini-chat-dev-secret"
+
+  static-authz-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  license-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  # Requires --features static-license.
+  static-license-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      # Deny by default: no rule, no grant. Rules are left empty because no gear
+      # gates on a licence yet -- a rule must name registered Subject/Resource
+      # contract types, and the resolver rejects a check against an unregistered
+      # one. See the plugin README for a worked rule set.
+      grants: []
+
+  mini-chat:
+    # Gear-specific database configuration
+    database:
+      server: "sqlite_users"
+      file: "mini_chat.db"
+    config:
+      # S2S credentials for obtaining SecurityContext
+      # that will be used for communication with other gears.
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-dev-secret"
+
+
+  resource-group:
+    database:
+      server: "sqlite_users"
+      file: "resource_group.db"
+    config: {}
+
+  static-idp-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  account-management:
+    database:
+      server: "sqlite_users"
+      file: "account_management.db"
+    config:
+      root_tenant_type:
+        gts_id: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+        idp_provisioning: false
+      bootstrap:
+        # Matches static-tr-plugin's `e2e-root` so AM's tenants table
+        # ends up holding the same root id the platform middleware
+        # already knows about, letting E2E callers POST child tenants
+        # under it without a separate seeding step.
+        root_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+        root_name: "e2e-root"
+        idp_wait_timeout: "5m"
+        idp_retry_backoff_initial: "2s"
+        idp_retry_backoff_max: "30s"
+        strict: false
+      idp:
+        # Must match static-idp-plugin's vendor so LazyIdpProvider
+        # resolves the plugin at bootstrap time. The IdpConfig default
+        # is "cf"; the E2E static-idp-plugin is configured with
+        # vendor "constructorfabric" (consistent with all other E2E plugins).
+        vendor: "constructorfabric"
+        # Fail-closed on missing IdP client: `static-idp-plugin` is
+        # enabled in this E2E config so the user-management surface
+        # (`/tenants/{id}/users`) MUST resolve to a live plugin, not
+        # the silent `NoopIdpProvider` fallback that returns 501. AM's
+        # `deps = [...]` does not name `static-idp-plugin` directly (AM
+        # is plugin-impl-agnostic), so without `idp.required=true` the
+        # ToolKit topo-sort could initialise AM before the plugin and
+        # leave it serving 501s for the lifetime of the process. With
+        # `required=true` AM aborts startup loud and fast if it can't
+        # see the plugin — the operator then knows to investigate
+        # rather than silently shipping a half-wired stack.
+        required: true
+
+  # FX rate-provider subsystem (plugin-based): the core `bss-rate-provider` gear
+  # discovers + composes source plugins; the ledger discovers the composite LAZILY
+  # from the types-registry each rate-sync tick (no deps edge). Compiled via the
+  # server `bss-rate-provider` feature. LEFT UNCONFIGURED here on purpose: an active
+  # ECB plugin makes the ledger's RateSyncJob fetch the LIVE ECB feed on its first
+  # tick (network egress in E2E). Enable in a deployment (or a gated FX E2E with a
+  # mock server) by uncommenting all sections; keep the vendors aligned across the
+  # core gear, the source plugins, and the ledger's `fx.provider_vendor`:
+  #
+  # bss-rate-provider:                 # core gear: discover source plugins + compose
+  #   config:
+  #     vendor: cf.bss                 # advertised to the ledger's fx.provider_vendor
+  #     source_vendor: cf.bss          # selects which source plugins to compose
+  # bss-rate-provider-ecb-plugin:      # ECB source plugin (primary; priority 100)
+  #   config:
+  #     id: ecb
+  #     vendor: cf.bss
+  #     priority: 100
+  #     base_url: "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
+  # # bss-rate-provider-http-json-plugin: add later for a fallback REST feed.
+  #
+  # ...and the consumer side: the `bss-ledger` block below gains an `fx` stanza
+  # naming the vendor the core gear advertises. Spelled out rather than left to
+  # the defaults because all three strings are matched literally and nothing
+  # validates them at startup — a typo in any one of them surfaces only as a
+  # "no source plugins registered" error on the ledger's first rate-sync tick.
+  #
+  # bss-ledger:
+  #   config:
+  #     fx:
+  #       provider_vendor: cf.bss      # MUST equal the core gear's `vendor` above
+  #
+  bss-ledger:
+    # Gear-specific database (SQLite for E2E, like the other user gears; the
+    # gear ships dual PG/SQLite migrations). No config block needed — the
+    # defaults (events_enabled=false, seller_tenant_types=partner+platform)
+    # are correct for E2E. `fx.provider_vendor` also defaults to "cf.bss", the
+    # same default the core `bss-rate-provider` gear advertises as its `vendor`,
+    # so the commented FX example above lines up without further edits.
+    database:
+      server: "sqlite_users"
+      file: "bss_ledger.db"
+
+  bss-pricing:
+    # Gear-specific database (SQLite for E2E, like the other user gears; the
+    # gear ships dual PG/SQLite migrations). No config block needed — the
+    # defaults are correct for E2E, including the in-repository path of the
+    # joint conformance-fixture registry. That registry's nine rows all carry
+    # `oracle = true` and `publish = true`, so the gate is OPEN for every model
+    # kind here — pricing's validator has earned the corpus's `publish` half.
+    # (This comment said the opposite until 2026-08-03; it had been stale since
+    # the registry was regenerated.) Since Slice 5 the publish endpoint exists
+    # and the open gate is load-bearing here: the e2e walk's pre-check passes
+    # rather than refusing FIXTURE_MISSING per model kind.
+    #
+    # The publish still cannot COMPLETE in this deployment, and the reason is a
+    # different one: there is no CatalogVersion registry gear in this
+    # repository, so the module boots with UnconfiguredCatalogVersionRegistryV1
+    # and the commit's version request fails closed (503). There is deliberately
+    # no config key that would supply a registry — a locally invented version
+    # would make this gear a second incrementer.
+    database:
+      server: "sqlite_users"
+      file: "bss_pricing.db"
+
+  simple-user-settings:
+    # Gear-specific database configuration
+    database:
+      server: "sqlite_users"
+      file: "settings.db"
+    config: {}
+
+  github-mirror:
+    database:
+      server: "sqlite_users"
+      file: "github_mirror.db"
+    config:
+      api_base_url: "https://api.github.com"
+
+  file-parser:
+    config:
+      allowed_local_base_dir: /tmp
+
+  file-storage:
+    # SQLite backend — no Postgres required for local / E2E runs.
+    database:
+      server: "sqlite_users"
+      file: "file_storage.db"
+    config:
+      # Default TTL and sidecar URL — overridden per-suite by the lifecycle
+      # conftest via config_patch (storage_root, sidecar_base_url, signing_key_seed).
+      sidecar_base_url: "http://localhost:8099"
+      storage_root: "./.file-storage-data"
+      # Use a fixed Ed25519 seed so signed-URL tokens survive a server restart
+      # and the sidecar can be pre-configured with the matching public key.
+      # Value is a 32-byte base64url-encoded seed (43 chars without padding).
+      # SHARED with the sidecar via FS_SIDECAR_PUBLIC_KEY (lifecycle conftest).
+      signing_key_seed: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      # Shared-server e2e run — no non-deterministic background activity.
+      enable_background_sweep: false
+
+  oagw:
+    config:
+      proxy_timeout_secs: 2
+      allow_http_upstream: true # Only for testing - do not enable in production without proper security controls
+      ssrf_policy:
+        enabled: false # Disabled for e2e tests (mock upstreams use 127.0.0.1)
+
+# OpenTelemetry configuration (resource identity, tracing, metrics)
+opentelemetry:
+  # Shared resource identity (attached to all traces and metrics)
+  resource:
+    service_name: "cf-gears-api"
+    attributes:
+      service.version: "1.3.7"
+      deployment.environment: "dev"
+      service.namespace: "cf-gears"
+
+  # Default exporter shared by tracing and metrics.
+  # Per-signal `exporter` fields override this when present.
+  exporter:
+    kind: "otlp_grpc"  # or "otlp_http"
+    endpoint: "http://127.0.0.1:4317"
+    headers:
+      # Add any required headers, e.g., for authentication
+      # authorization: "Bearer your-token"
+      uptrace-dsn: "http://project1_secret@localhost:14318?grpc=14317"
+    timeout_ms: 5000
+
+  # Tracing configuration
+  tracing:
+    enabled: false
+
+    # Per-signal exporter override (fully replaces the shared exporter)
+    exporter:
+      kind: "otlp_grpc"
+      endpoint: "http://127.0.0.1:14317"  # Jaeger OTLP gRPC endpoint
+
+    # Sampling configuration
+    sampler:
+      parent_based_ratio: # parent_based_always_on | parent_based_ratio | always_on | always_off
+        ratio: 1.0  # Sample 100% of traces
+
+    # Propagation configuration
+    propagation:
+      w3c_trace_context: true  # Enable W3C Trace Context propagation
+
+    # HTTP-specific options
+    http:
+      inject_request_id_header: "x-request-id"
+      # Credential-bearing headers ("authorization", "cookie", …) must never
+      # be listed here: whatever is recorded reaches the trace collector.
+      record_headers: [ "user-agent", "x-forwarded-for" ]
+
+    # Add top-level trace_id / span_id to JSON log records so a backend can
+    # link a log line to its span. Off by default: it costs a context lookup
+    # per event.
+    logs_correlation:
+      inject_trace_ids_into_logs: true
+
+  # Metrics configuration
+  metrics:
+    enabled: false
+
+# Example configurations for different database scenarios:
+#
+# Example 1: PostgreSQL server with multiple gears
+# ==================================================
+# database:
+#   servers:
+#     main_postgres:
+#       host: "localhost"
+#       port: 5432
+#       user: "cf_gears"
+#       password: "${POSTGRES_PASSWORD}"  # From environment variable
+#       params:
+#         sslmode: "require"
+#         application_name: "cf_gears"
+#       pool:
+#         max_conns: 20
+#         acquire_timeout: "30s"
+# gears:
+#   users_gear:
+#     database:
+#       server: "main_postgres"
+#       dbname: "users_db"              # Each gear gets its own database
+#   orders_gear:
+#     database:
+#       server: "main_postgres"
+#       dbname: "orders_db"             # Separate database for orders
+#       pool:
+#         max_conns: 10                 # Gear-specific pool override
+#
+# Example 2: Mixed database types
+# ===============================
+# database:
+#   servers:
+#     postgres_main:
+#       dsn: "postgres://user:${PG_PASS}@localhost:5432/main"
+#     redis_cache:
+#       dsn: "redis://localhost:6379/0"
+# gears:
+#   user_service:
+#     database:
+#       server: "postgres_main"
+#       dbname: "users"
+#   cache_service:
+#     database:
+#       server: "redis_cache"
+#
+# Example 3: Complete DSN override
+# ================================
+# gears:
+#   analytics:
+#     database:
+#       dsn: "postgres://analytics:${ANALYTICS_PASSWORD}@analytics-db:5432/metrics?sslmode=require"
+#       # When DSN is specified, server reference is ignored
+#
+# Example 4: No database gear
+# =============================
+# gears:
+#   static_files:
+#     # No database section - gear won't get database access
+#     config:
+#       static_dir: "/var/www/static"

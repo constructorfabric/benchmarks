@@ -1,0 +1,41 @@
+[package]
+name = "cf-gears-toolkit-transport-grpc"
+version = "0.9.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ToolKit gRPC transport library"
+readme = "README.md"
+keywords = ["constructorfabric", "cf-gears", "cf-gears-toolkit"]
+categories = ["network-programming"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "toolkit_transport_grpc"
+
+[lints]
+workspace = true
+
+[dependencies]
+tonic = { workspace = true }
+toolkit-security = { workspace = true }
+
+futures-util = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-retry = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+secrecy = { workspace = true }
+parking_lot = { workspace = true }
+tower = { workspace = true }
+http = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

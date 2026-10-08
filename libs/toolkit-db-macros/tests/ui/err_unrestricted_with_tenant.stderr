@@ -1,0 +1,11 @@
+error: Cannot use 'tenant_col' with 'unrestricted'
+ --> tests/ui/err_unrestricted_with_tenant.rs:6:24
+  |
+6 | #[secure(unrestricted, tenant_col = "tenant_id")]
+  |                        ^^^^^^^^^^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/err_unrestricted_with_tenant.rs:7:14
+  |
+7 | struct Model;
+  |              ^ consider adding a `main` function to `$DIR/tests/ui/err_unrestricted_with_tenant.rs`

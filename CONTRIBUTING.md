@@ -1,0 +1,594 @@
+# Contributing to CF/Gears
+
+Thank you for your interest in contributing to Constructor Fabric Gears! This document provides guidelines and information for contributors.
+
+We welcome contributions in:
+
+- **New gears**: Add functionality to the platform
+- **Bug fixes**: Fix issues in existing code
+- **Documentation**: Improve guides and examples
+- **Testing**: Add test coverage and improve test quality
+- **Performance**: Optimize critical paths
+- **Developer experience**: Improve tooling and workflows
+
+
+## 1. Quick Start
+
+### 1.1 Prerequisites
+
+Follow the cross-platform [development setup guide](SETUP.md) before contributing. It covers macOS, Linux, and Windows setup, including Rust and Cargo through rustup, native build tools, `make setup`, and optional Constructor Studio installation.
+
+- **Your favorite editor** (VS Code with rust-analyzer recommended)
+
+### 1.2 Development Setup
+
+```bash
+# Clone the repository after completing SETUP.md.
+git clone --recurse-submodules <repository-url>
+cd gears-rust
+
+# If you did not clone with --recurse-submodules
+# (includes Constructor Studio for PR reviews)
+git submodule update --init --recursive
+
+# Build the whole-project example server release binary
+make build
+
+# Run workspace tests
+make test
+
+# Run the local quality gate
+make check
+
+# Start the development server (SQLite quickstart)
+make quickstart
+
+# Run the default example server
+make run
+
+# Build, test, or run one gear scope
+make build GEAR=file-parser
+make test GEAR=file-parser
+make run GEAR=file-parser
+
+# Start the development server with the example users_info gear
+cargo run --bin cf-gears-example-server --features users-info-example -- --config config/quickstart.yaml run
+```
+
+## 2. Development Workflow
+
+### 2.1. Create a Feature Branch or Fork
+
+```bash
+git checkout -b feature/your-feature-name
+```
+
+Use descriptive branch names:
+- `feature/user-authentication`
+- `fix/memory-leak-in-router`
+- `docs/api-gateway-examples`
+- `refactor/entity-to-contract-conversions`
+
+As an alternative, you can fork the repository to your own GitHub account.
+
+### 2.2. New Gears Development
+
+Constructor Fabric Gears follows a spec-driven development (SDD) approach for large features. Gear development starts with specifications that live alongside the code. When you add features, make design decisions, or introduce upstream requirements, you must use the following templates and keep them aligned with the implementation:
+
+- **[Overview & Guide](./docs/spec-templates/README.md)** — Template system overview, governance, FDD ID conventions, and document placement rules
+- **[PRD.md](./docs/spec-templates/gears-sdlc/PRD/template.md)** — Product Requirements Document: vision, actors, capabilities, use cases, FR/NFR
+- **[DESIGN.md](./docs/spec-templates/gears-sdlc/DESIGN/template.md)** — Technical Design: architecture, principles, constraints, domain model, API contracts
+- **[ADR.md](./docs/spec-templates/gears-sdlc/ADR/template.md)** — Architecture Decision Record: decisions, options, trade-offs, consequences
+- **[FEATURE.md](./docs/spec-templates/gears-sdlc/FEATURE/template.md)** — Feature Specification: flows, algorithms, states, requirements
+- **[UPSTREAM_REQS.md](./docs/spec-templates/gears-sdlc/UPSTREAM_REQS/template.md)** — Upstream Requirements: technical requirements from other gears to this gear
+
+### 2.3. Make Your Changes
+
+Follow the coding standards and guidelines:
+
+1. See common [RUST.md](./guidelines/DNA/languages/RUST.md) guideline
+2. When develop new REST API use [API.md](./guidelines/DNA/REST/API.md), [STATUS_CODES](./guidelines/DNA/REST/STATUS_CODES.md)
+3. When develop new Gear use [ToolKit Unified System](./docs/toolkit_unified_system/README.md)
+4. Security policy [SECURITY.md](./SECURITY.md) and secure coding [guidelines/SECURITY.md](./guidelines/SECURITY.md)
+5. ToolKit architecture and invariants [docs/toolkit_unified_system/README.md](./docs/toolkit_unified_system/README.md)
+
+Gear directories under `gears/` must use kebab-case (validated by `tools/scripts/validate_gear_names.py` and enforced in CI).
+
+#### Building, running, and testing one gear
+
+The Makefile supports an optional `GEAR=<name>` scope for common top-level commands. Without `GEAR`, commands run at the whole-project or workspace level.
+
+```bash
+make build                    # whole-project example server release binary
+make test                     # workspace tests
+make run                      # default example server
+make all                      # build + check + SQLite integration + local E2E + OpenAPI
+
+make build GEAR=file-parser   # cf-gears-file-parser plus its SDK crate
+make test GEAR=file-parser    # tests for cf-gears-file-parser plus its SDK crate
+make run GEAR=file-parser     # example server with only this gear feature set
+make e2e-local SUITE=file-parser
+make coverage GEAR=file-parser
+```
+
+By default, `GEAR=<name>` maps to package names `cf-gears-<name>` and `cf-gears-<name>-sdk`, and `make run GEAR=<name>` enables the gear feature together with the static local development system gears. Override `GEAR_PKG`, `GEAR_SDK_PKG`, `GEAR_FEATURES`, `GEAR_BUILD_ARGS`, `GEAR_TEST_ARGS`, or `GEAR_RUN_ARGS` for non-standard package names, extra features, or runtime arguments.
+
+Runtime configuration is YAML-driven: each gear reads its settings under `gears:<gear_name>:` with a `config` section and, when needed, a gear-owned `database` section. Cargo feature selection decides which gear code is compiled into the example server; YAML decides the runtime settings for the compiled-in gears.
+
+#### Gear dependencies and `cargo-shear`
+
+When a gear declares dependencies via `#[gear(deps = [...])]`, the dep entries are
+**crate identifiers** (snake_case). The runtime gear name is derived by replacing
+underscores with hyphens (`authn_resolver` → `"authn-resolver"`), matching the
+convention that `lib-name == gear-name` across the workspace.
+
+The macro generates hidden `pub use` re-exports that force the linker to keep each
+dependency's `inventory::submit!` registration alive. Because these re-exports only
+exist in macro-expanded code, `cargo-shear` cannot see them and will flag the
+dependency crates as unused.
+
+**When adding a new gear dependency**, add the crate name to the
+`[workspace.metadata.cargo-shear] ignored` list in the workspace `Cargo.toml`.
+
+`cargo-shear` does not run on pull requests — the scan takes about an hour, so it
+runs once nightly. Forgetting the `ignored`
+entry therefore breaks `main` after your PR merges rather than failing your PR. The
+nightly opens a tracking issue quoting the offending package and dependency, and
+closes it once a later run passes.
+
+Before merging a change that adds or removes dependencies, check it against
+cargo-shear. The cheapest route needs no local setup and uses the same pinned
+toolchain and cargo-shear version as CI: Actions → Unused Deps (nightly) → Run
+workflow → select your branch.
+
+To check offline instead, run `make shear`. It needs `cargo-shear` on your `PATH`
+(`make setup` installs it, pinned to the version CI uses) plus the nightly toolchain
+named by `RUST_NIGHTLY` in the Makefile, which rustup downloads on first use. Budget
+about an hour for the scan.
+
+Always include unit tests when introducing new code.
+
+### 2.4. Run Code Quality Checks
+
+Build and run all the quality checks:
+
+```bash
+# Run the complete quality check suite: formatting, linting, tests, and security
+make check # Linux/Mac
+python tools/scripts/ci.py check # Windows
+
+# Run the full pipeline (includes build + e2e-local)
+make all # Linux/Mac
+python tools/scripts/ci.py all # Windows
+
+# Scope common Makefile targets to one gear when iterating locally
+make check GEAR=file-parser
+make test GEAR=file-parser
+make e2e-local SUITE=file-parser
+```
+
+Note: CI workflows may not run for PRs that only touch `*.md` files or `docs/**` due to path filters.
+
+Aim for high test coverage:
+- **Unit tests**: Test individual functions and methods
+- **Integration tests**: Test gear interactions
+- **End-to-end tests**: Test complete request flows
+
+```bash
+# Run tests with coverage (automatically detects your OS)
+make coverage # Run both unit and e2e tests with code coverage
+make coverage-unit # Run only unit tests with code coverage
+make coverage-e2e-local # Run only e2e tests with code coverage
+```
+
+### 2.5. Architecture Lints
+
+Architecture lints enforce design boundaries at compile time (DTO placement, domain-layer isolation, contract-layer purity, versioned REST paths, etc.). The lint rules themselves live in the [`cargo-gears` CLI](https://github.com/constructorfabric/cargo-gears); this repository only configures which rules to run and their parameters.
+
+#### Running lints locally
+
+```bash
+# Run architecture lints (requires cargo-gears installed via `make setup`)
+make dylint
+
+# Equivalent direct invocation
+cargo gears lint --dylint
+```
+
+Architecture lints also run as part of `make safety` and in the CI pipeline.
+
+#### Configuration files
+
+| File | Purpose |
+|------|---------|
+| [`Gears.toml`](./Gears.toml) | Top-level manifest: enables/disables the dylint pass, lists rules to **skip** (pre-existing violations not yet fixed) |
+| [`dylint.toml`](./dylint.toml) | Rule-specific parameters: allow-lists, thresholds, path exclusions |
+
+#### Adopting a new lint rule in this repository
+
+When a new architecture lint is added to `cargo-gears`, the following steps bring it into `gears-rust`:
+
+1. **Update `cargo-gears`** — install the version that includes the new rule (`cargo install cargo-gears` or pin a specific version).
+2. **Run `make dylint`** — see if the new rule produces violations in the current codebase.
+3. **Fix or exclude** — either fix all violations, or (for large-scale migrations) add the rule to the `skip` list in `Gears.toml` and/or add path exclusions in `dylint.toml` while tracking the clean-up.
+4. **Commit configuration changes** — include `Gears.toml` / `dylint.toml` updates in your PR alongside any code fixes.
+
+> For instructions on **authoring** a new lint rule, see the [Adding a New Lint Rule](https://github.com/constructorfabric/cargo-gears/blob/main/crates/cargo-gears-lints/README.md#adding-a-new-lint-rule) guide in the `cargo-gears` repository.
+
+#### Example: skipping a rule with pre-existing violations
+
+In `Gears.toml`, add the rule ID to the `skip` list:
+
+```toml
+[apps.gears-rust.dev.lint.dylint]
+enabled = true
+skip = [
+    "de0504_client_versioning",   # not yet addressed
+    "de1101_tests_in_separate_files",  # migration in progress
+]
+```
+
+In `dylint.toml`, use `excluded_paths` for per-rule path-level granularity:
+
+```toml
+[cargo-gears-lints]
+excluded_paths = [
+    "libs/toolkit",
+    "gears/approval-service",
+]
+```
+
+### 2.6. Run Fuzzing Tests (Recommended)
+
+Before submitting changes to parsers or validation logic, run fuzzing:
+
+```bash
+# Quick smoke test (30s per target)
+make fuzz
+
+# Longer test for critical changes (5 minutes per target)
+python tools/scripts/ci.py fuzz --seconds 300
+
+# Target specific component
+make fuzz-run FUZZ_TARGET=fuzz_odata_filter FUZZ_SECONDS=600
+```
+
+Fuzzing helps catch:
+- Parser crashes
+- Performance problems
+- Edge cases
+
+See `tools/fuzz/README.md` for detailed fuzzing documentation.
+
+Helpful environment variables:
+
+```bash
+# Turn on debug-level logging
+export RUST_LOG=debug
+
+# Show backtraces on panic
+export RUST_BACKTRACE=full
+```
+
+
+### 2.7. Sign Your Commits (DCO)
+
+This project uses the Developer Certificate of Origin (DCO) version 1.1.
+- The DCO text is included in `guidelines/DNA/DCO.txt` (Version 1.1). This is the current and widely adopted version; please keep it as 1.1.
+- Every commit must include a Signed-off-by line to certify you have the right to submit the contribution under the project license (Apache-2.0).
+
+Sign off your commits:
+```bash
+git commit -s -m "your message"
+```
+This adds a footer like:
+```
+Signed-off-by: Your Name <your.email@example.com>
+```
+Enable auto sign-off for all commits:
+```bash
+git config --global format.signoff true
+```
+
+
+### 2.8. Commit Changes
+
+Follow a structured commit message format:
+
+```text
+<type>(<gear>): <description>
+```
+
+- `<type>`: change category (see table below)
+- `<gear>` (optional): the area touched (e.g., api_gateway, toolkit, ecommerce)
+- `<description>`: concise, imperative summary
+
+Accepted commit types:
+
+| Type       | Meaning                                                     |
+|------------|-------------------------------------------------------------|
+| feat       | A new feature                                               |
+| fix        | A bug fix                                                   |
+| tech       | A technical improvement                                     |
+| cleanup    | Code cleanup                                                |
+| refactor   | Code restructuring without functional changes               |
+| test       | Adding or modifying tests                                   |
+| docs       | Documentation updates                                       |
+| style      | Code style changes (whitespace, formatting, etc.)           |
+| chore      | Misc tasks (deps, tooling, scripts)                         |
+| perf       | Performance improvements                                    |
+| ci         | CI/CD configuration changes                                 |
+| build      | Build system or dependency changes                          |
+| revert     | Reverting a previous commit                                 |
+| security   | Security fixes                                              |
+| breaking   | Backward incompatible changes                               |
+
+Examples:
+
+```text
+feat(auth): add OAuth2 support for login
+fix(ui): resolve button alignment issue on mobile
+tech(database): add error abstraction for database and API errors
+refactor(database): optimize query execution
+test(api): add unit tests for user authentication
+docs(readme): update installation instructions
+style(css): apply consistent spacing in stylesheet
+```
+
+Best practices:
+
+- Keep the title concise (ideally ≤ 50 chars)
+- Use imperative mood (e.g., "Fix bug", not "Fixed bug")
+- Make commits atomic (one logical change per commit)
+- Add details in the body when necessary (what/why, not how)
+- For breaking changes, either use `feat!:`/`fix!:` or include a `BREAKING CHANGE:` footer
+
+New functionality development:
+
+- Follow the repository structure in `README.md`
+- Prefer soft-deletion for entities; provide hard-deletion with retention routines
+- Include unit tests (and integration tests when relevant)
+
+### 2.9. Push and Create PR
+
+```bash
+git push origin feature/your-feature-name
+```
+
+Then create a Pull Request on GitHub with:
+- Clear title and description
+- Reference to related issues
+- Test coverage information
+- Breaking changes (if any)
+
+Use the following PR Description Template
+
+```markdown
+## Description
+Brief description of the changes made.
+
+## Type of Change
+- [ ] Bug fix (non-breaking change which fixes an issue)
+- [ ] New feature (non-breaking change which adds functionality)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Documentation update
+
+## Testing
+- [ ] Unit tests pass
+- [ ] Integration tests pass
+- [ ] Manual testing completed
+- [ ] New tests added for new functionality
+
+## Documentation
+- [ ] Code is documented with rustdoc comments
+- [ ] README updated (if applicable)
+- [ ] API documentation updated (if applicable)
+
+## Checklist
+- [ ] Code follows project style guidelines
+- [ ] Self-review completed
+- [ ] No linting errors (`cargo clippy`)
+- [ ] Code is properly formatted (`cargo fmt`)
+- [ ] Tests pass (`cargo test`)
+
+## Related Issues
+Closes #issue_number
+```
+
+### 2.10. Review Process
+
+1. **Automated checks** must pass (CI/CD pipeline)
+2. **At least one approval** from maintainer required
+3. **All conversations resolved** before merge
+4. **Up-to-date with main** branch
+
+Merge Strategy:
+
+- **Squash and merge** for feature branches
+- **Rebase and merge** for simple fixes
+- **Merge commit** for release branches
+
+### 2.11. Local PR Review with Constructor Studio
+
+After pushing your PR and waiting for the cloud AI bots (CodeRabbit, Qodo, etc.) to complete their reviews, run a local Constructor Studio review to catch additional issues
+before requesting human review:
+
+```text
+cf-gears-pr-review PR <number>
+```
+
+Use any supported IDE agent (Windsurf, Cursor, Claude, Copilot) — each redirects to the canonical workflows via `/cf-gears-pr-review` and `/cf-gears-pr-status` commands.
+
+You can also check the PR status (unreplied comments, severity, etc.):
+
+```text
+cf-gears-pr-status PR <number>
+```
+
+See the results in `.prs/{ID}/` folder.
+
+See [docs/pr-review/README.md](./docs/pr-review/README.md) for full setup (GitHub CLI authentication, configuration, available review prompts) and usage details.
+
+
+## 3. Versioning
+
+This topic defines how Constructor Fabric Gears versions crates and handles breaking changes.
+
+## Scope
+
+Applies to:
+- All Rust crates in this repository (libraries, gears, SDKs, macros).
+- Public APIs and contracts exposed to downstream users (Rust API, REST, gRPC/proto, CLI).
+
+Non-goals:
+- Internal-only refactors that do not change any public contract (still must be tested, but do not force version bumps).
+
+## SemVer Rules (Crates)
+
+We use Semantic Versioning: `MAJOR.MINOR.PATCH`.
+
+### PATCH (x.y.Z)
+Allowed:
+- Bugfixes
+- Performance improvements
+- Internal refactors
+- Doc and test updates
+  Not allowed:
+- Any public API or behavior change that can break downstream compilation
+
+### MINOR (x.Y.z)
+Allowed:
+- Backward compatible new features
+- New APIs that do not break existing code
+  Not allowed:
+- Breaking changes
+
+### MAJOR (X.y.z)
+Required for:
+- Any breaking change (see the definition below)
+
+## Pre-1.0 Policy (0.x)
+
+For crates with version `0.x.y`:
+- `0.(x+1).0` is treated as a breaking release.
+- `0.x.(y+1)` is treated as non-breaking.
+
+Rule of thumb: before 1.0, MINOR behaves like MAJOR.
+
+## What Counts as a Breaking Change (Rust)
+
+Breaking means: existing downstream code may fail to compile or a stable contract is violated.
+
+Examples:
+- Removing or renaming any `pub` item
+- Changing function signatures (params, generics, bounds, return type)
+- Changing public struct/enum layout in a way that breaks construction or pattern matching
+- Removing a `pub` field
+- Removing trait impls that downstream relies on
+- Adding a method to a public trait without a default implementation
+- Tightening trait bounds or visibility in a way that reduces what compiles
+
+If in doubt: treat it as breaking.
+
+## What Is Not Breaking (But Must Be Noted)
+
+Not breaking (SemVer-wise), but must be documented in changelog/release notes:
+- Performance changes
+- Changes in logging text, error strings, metrics naming
+- More strict validation returning errors in previously accepted edge cases (allowed only if it does not violate an explicit documented contract)
+
+## Public Contract Types and Their Versioning
+
+### Rust crate API
+- Governed by SemVer rules above.
+
+### REST API
+- Versioned in the URL (`/v1/...`, `/v2/...`).
+- Breaking REST changes require a new API version (for example `/v2`) and a deprecation period for old versions.
+
+### gRPC / Protobuf
+- Treat `.proto` as a public contract.
+- Follow protobuf compatibility rules:
+    - Do not reuse field numbers.
+    - Do not change field types in incompatible ways.
+    - Prefer adding optional fields over changing existing ones.
+- Breaking proto changes require a MAJOR bump for affected crates and, if exposed externally, a new API/proto version strategy.
+
+### CLI
+- User-facing CLI flags, commands, and output formats are public.
+- Breaking CLI changes require MAJOR.
+
+## Deprecation Policy
+
+When feasible, prefer deprecation over immediate removal:
+- Mark APIs as deprecated for at least one MINOR release before removal.
+- Include migration notes (what to use instead).
+
+Removal of deprecated APIs is breaking and requires MAJOR.
+
+## Workspace Policy (Monorepo)
+
+We use per-crate versioning, controlled via Cargo manifests and release automation.
+
+### Publishable vs internal crates
+- `publish = false` means the crate is internal and must not be published.
+- Internal crates can still follow SemVer for sanity, but do not promise external stability.
+
+### Version sources
+- Gears and SDKs keep explicit `version = "..."` in their `Cargo.toml`.
+- ToolKit libs may use `version.workspace = true` (unified framework versioning).
+
+## ToolKit Unified Release Rule
+
+ToolKit is released as a unified framework:
+- Only `cf-gears-toolkit` produces changelog entries and GitHub releases.
+- Other `cf-gears-toolkit-*` crates are published to crates.io but do not create separate changelog entries/releases.
+
+## Release Process (Automation)
+
+We use release-plz:
+- Release PRs are labeled `release-plz`.
+- Repository-level `CHANGELOG.md` is the single changelog source.
+- GitHub releases are enabled where configured.
+
+SemVer checks:
+- We aim to run semver checks for published crates.
+- If temporarily disabled (bootstrap or tooling noise), do not use that as an excuse to sneak breaking changes into MINOR/PATCH.
+
+## How to Decide the Version Bump
+
+Use this table:
+
+| Change | Bump |
+|------|------|
+| Bugfix only | PATCH |
+| Backward compatible new API/feature | MINOR |
+| Any breaking change | MAJOR |
+| Pre-1.0: breaking change | bump 0.(x+1).0 |
+
+## Required Release Notes
+
+Every release must document:
+- Added
+- Changed
+- Fixed
+- Breaking (if any) with migration steps
+
+No "minor fixes" wording for releases that break users.
+
+## Enforcement
+
+Before merging changes that affect public crates/contracts:
+- Tests must pass.
+- If you touched a public surface, you must justify the version bump category in the PR description.
+
+## Getting Help
+
+- **GitHub Issues**: For bug reports and feature requests
+- **GitHub Discussions**: For questions and general discussion
+- **Documentation**: Check existing docs first
+- **Code Examples**: Look at existing gears for patterns
+
+---
+
+Thank you for contributing to Constructor Fabric Gears!

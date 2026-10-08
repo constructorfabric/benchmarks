@@ -1,0 +1,39 @@
+[package]
+name = "cf-gears-rustls-fips-shim"
+version = "0.1.2"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Workspace-feature-unification shim: pulls rustls + hyper-rustls with the `fips` feature on every target where the AWS-LC FIPS backend is the intended TLS provider (i.e. everywhere except macOS, where Apple corecrypto is used, and Windows, where CNG is used instead)."
+keywords = ["constructorfabric", "cf-gears"]
+publish = true
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "rustls_fips_shim"
+path = "src/lib.rs"
+
+# These deps are intentionally never referenced in code; they exist solely so
+# Cargo feature unification ORs the `fips` feature into the workspace's
+# `rustls`/`hyper-rustls`. See the target-deps comment below.
+[package.metadata.cargo-shear]
+ignored = ["rustls", "hyper-rustls"]
+
+[lints]
+workspace = true
+
+# The shim's purpose: pull rustls + hyper-rustls with the `fips` feature
+# enabled on every target where the AWS-LC FIPS backend is valid. On macOS
+# we want NEITHER feature active (Apple corecrypto replaces the backend);
+# on Windows we want NEITHER feature active either (Windows CNG replaces
+# it). For both targets this target-gated deps section is empty, so
+# `aws-lc-fips-sys` stays out of the build graph entirely.
+#
+# Mere inclusion of this crate in the dependency graph causes Cargo's feature
+# unification to OR the `fips` feature into the workspace's primary `rustls`
+# and `hyper-rustls` deps. The shim has no public API — its lib is empty.
+[target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
+rustls = { workspace = true, features = ["fips"] }
+hyper-rustls = { workspace = true, features = ["fips"] }

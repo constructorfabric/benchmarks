@@ -1,0 +1,504 @@
+//! Minimalistic, type-safe `ClientHub`.
+//!
+//! Design goals:
+//! - Providers register an implementation once (local or remote).
+//! - Consumers fetch by *interface type* (trait object): `get::<dyn my::Api>()`.
+//! - For plugin-like scenarios, multiple implementations of the same interface can coexist
+//!   under different scopes (e.g. selected by GTS instance ID).
+//!
+//! Implementation details:
+//! - Key = type name. We use `type_name::<T>()`, which works for `T = dyn Trait`.
+//! - Value = `Arc<T>` stored as `Box<dyn Any + Send + Sync>` (downcast on read).
+//! - Sync hot path: `get()` is non-async; no hidden per-entry cells or lazy slots.
+//!
+//! Notes:
+//! - Re-registering overwrites the previous value atomically; existing Arcs held by consumers remain valid.
+//! - For testing, just register a mock under the same trait type.
+
+use parking_lot::RwLock;
+use std::{any::Any, collections::HashMap, fmt, sync::Arc};
+
+/// Stable type key for trait objects — uses fully-qualified `type_name::<T>()`.
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub struct TypeKey(&'static str);
+
+impl TypeKey {
+    #[inline]
+    fn of<T: ?Sized + 'static>() -> Self {
+        TypeKey(std::any::type_name::<T>())
+    }
+}
+
+impl fmt::Debug for TypeKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// A scope for resolving multiple implementations of the same interface type.
+///
+/// This is intentionally opaque: the scope semantics are defined by the caller.
+/// One common scope is a full GTS entity/instance ID.
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub struct ClientScope(Arc<str>);
+
+impl ClientScope {
+    /// Create a new scope from an arbitrary string.
+    #[inline]
+    #[must_use]
+    pub fn new(scope: impl Into<Arc<str>>) -> Self {
+        Self(scope.into())
+    }
+
+    /// Create a scope derived from a GTS identifier.
+    ///
+    /// Internally we prefix the scope to avoid accidental collisions with other scope kinds.
+    #[must_use]
+    pub fn gts_id(gts_id: &str) -> Self {
+        let mut s = String::with_capacity("gts:".len() + gts_id.len());
+        s.push_str("gts:");
+        s.push_str(gts_id);
+        Self(Arc::<str>::from(s))
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ClientScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Hash)]
+struct ScopedKey {
+    type_key: TypeKey,
+    scope: ClientScope,
+}
+
+impl fmt::Debug for ScopedKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScopedKey")
+            .field("type_key", &self.type_key)
+            .field("scope", &self.scope)
+            .finish()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ClientHubError {
+    #[error("client not found: type={type_key:?}")]
+    NotFound { type_key: TypeKey },
+
+    #[error("type mismatch in hub for type={type_key:?}")]
+    TypeMismatch { type_key: TypeKey },
+
+    #[error("scoped client not found: type={type_key:?} scope={scope:?}")]
+    ScopedNotFound {
+        type_key: TypeKey,
+        scope: ClientScope,
+    },
+
+    #[error("type mismatch in hub for type={type_key:?} scope={scope:?}")]
+    ScopedTypeMismatch {
+        type_key: TypeKey,
+        scope: ClientScope,
+    },
+}
+
+type Boxed = Box<dyn Any + Send + Sync>;
+
+/// Internal map type for the client hub.
+type ClientMap = HashMap<TypeKey, Boxed>;
+
+/// Internal map type for the scoped client hub.
+type ScopedClientMap = HashMap<ScopedKey, Boxed>;
+
+/// Type-safe registry of clients keyed by interface type.
+#[derive(Default)]
+pub struct ClientHub {
+    map: RwLock<ClientMap>,
+    scoped_map: RwLock<ScopedClientMap>,
+    /// Types registered by consumer wiring as a discovery-resolving remote
+    /// proxy rather than a genuine in-process implementation.
+    ///
+    /// The hub is keyed by type alone, so a proxy and a local impl are
+    /// indistinguishable once stored. Consumer wiring needs to tell them apart:
+    /// finding a *proxy* under a contract does not mean the dependency is
+    /// satisfied locally, and treating it as such marks the dependency
+    /// readiness-resolved while the provider is still absent.
+    remote_proxies: RwLock<std::collections::HashSet<TypeKey>>,
+}
+
+impl ClientHub {
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            map: RwLock::new(HashMap::new()),
+            scoped_map: RwLock::new(HashMap::new()),
+            remote_proxies: RwLock::new(std::collections::HashSet::new()),
+        }
+    }
+}
+
+impl ClientHub {
+    /// Register a client under the interface type `T`.
+    /// `T` can be a trait object like `dyn my_gear::api::MyClient`.
+    pub fn register<T>(&self, client: Arc<T>)
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let type_key = TypeKey::of::<T>();
+        let mut w = self.map.write();
+        w.insert(type_key, Box::new(client));
+    }
+
+    /// Register a scoped client under the interface type `T`.
+    ///
+    /// This enables multiple implementations of the same interface to coexist,
+    /// distinguished by a caller-defined `ClientScope` (e.g., a GTS instance ID).
+    pub fn register_scoped<T>(&self, scope: ClientScope, client: Arc<T>)
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let key = ScopedKey {
+            type_key: TypeKey::of::<T>(),
+            scope,
+        };
+        let mut w = self.scoped_map.write();
+        w.insert(key, Box::new(client));
+    }
+
+    /// Fetch a client by interface type `T`.
+    ///
+    /// # Errors
+    /// Returns `ClientHubError::NotFound` if no client is registered for the type.
+    /// Returns `ClientHubError::TypeMismatch` if the stored type doesn't match.
+    pub fn get<T>(&self) -> Result<Arc<T>, ClientHubError>
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let type_key = TypeKey::of::<T>();
+        let r = self.map.read();
+
+        let boxed = r.get(&type_key).ok_or(ClientHubError::NotFound {
+            type_key: type_key.clone(),
+        })?;
+
+        // Stored value is exactly `Arc<T>`; downcast is safe and cheap.
+        if let Some(arc_t) = boxed.downcast_ref::<Arc<T>>() {
+            return Ok(arc_t.clone());
+        }
+        Err(ClientHubError::TypeMismatch { type_key })
+    }
+
+    /// Try to fetch a client by interface type `T`.
+    ///
+    /// Returns `None` if no client is registered for the type or if the stored
+    /// type doesn't match. This sees every registration, proxies included — use
+    /// [`Self::try_get_local`] when the answer needs to mean "satisfied
+    /// in-process".
+    pub fn try_get<T>(&self) -> Option<Arc<T>>
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let type_key = TypeKey::of::<T>();
+        let r = self.map.read();
+        let boxed = r.get(&type_key)?;
+        boxed.downcast_ref::<Arc<T>>().cloned()
+    }
+
+    /// Register a client that is a discovery-resolving proxy to a *remote*
+    /// provider, not an in-process implementation.
+    ///
+    /// Stored exactly like [`Self::register`]; the difference is that the type
+    /// is remembered as remote so [`Self::try_get_local`] will not report it as
+    /// a local implementation.
+    pub fn register_remote_proxy<T>(&self, client: Arc<T>)
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let type_key = TypeKey::of::<T>();
+        self.remote_proxies.write().insert(type_key.clone());
+        self.map.write().insert(type_key, Box::new(client));
+    }
+
+    /// Try to fetch a client by interface type `T`, ignoring remote proxies.
+    ///
+    /// This is the short-circuit probe for consumer wiring: a compile-time
+    /// (local) registration takes priority over a discovery-based proxy, so the
+    /// wiring closure asks whether a *local* implementation exists before
+    /// registering one of its own.
+    ///
+    /// Using plain [`Self::try_get`] here would be wrong when two consumers in
+    /// one process depend on the same contract: whichever wires second would
+    /// find the first one's proxy, conclude the dependency is local, and mark
+    /// it readiness-resolved — turning `/readyz` green before the provider
+    /// exists.
+    pub fn try_get_local<T>(&self) -> Option<Arc<T>>
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let type_key = TypeKey::of::<T>();
+        if self.remote_proxies.read().contains(&type_key) {
+            return None;
+        }
+        let r = self.map.read();
+        let boxed = r.get(&type_key)?;
+        boxed.downcast_ref::<Arc<T>>().cloned()
+    }
+
+    /// Whether a remote proxy is already registered for interface type `T`.
+    ///
+    /// Lets consumer wiring reuse an existing proxy instead of building and
+    /// registering a second identical one for the same contract.
+    #[must_use]
+    pub fn has_remote_proxy<T>(&self) -> bool
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        self.remote_proxies.read().contains(&TypeKey::of::<T>())
+    }
+
+    /// Fetch a scoped client by interface type `T` and scope.
+    ///
+    /// # Errors
+    /// Returns `ClientHubError::ScopedNotFound` if no client is registered for the `(type, scope)` pair.
+    /// Returns `ClientHubError::ScopedTypeMismatch` if the stored type doesn't match.
+    pub fn get_scoped<T>(&self, scope: &ClientScope) -> Result<Arc<T>, ClientHubError>
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let key = ScopedKey {
+            type_key: TypeKey::of::<T>(),
+            scope: scope.clone(),
+        };
+        let r = self.scoped_map.read();
+
+        let boxed = r.get(&key).ok_or_else(|| ClientHubError::ScopedNotFound {
+            type_key: key.type_key.clone(),
+            scope: key.scope.clone(),
+        })?;
+
+        if let Some(arc_t) = boxed.downcast_ref::<Arc<T>>() {
+            return Ok(arc_t.clone());
+        }
+        Err(ClientHubError::ScopedTypeMismatch {
+            type_key: key.type_key,
+            scope: key.scope,
+        })
+    }
+
+    /// Try to fetch a scoped client by interface type `T` and scope.
+    ///
+    /// Returns `None` if not found or if the stored type doesn't match.
+    pub fn try_get_scoped<T>(&self, scope: &ClientScope) -> Option<Arc<T>>
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let key = ScopedKey {
+            type_key: TypeKey::of::<T>(),
+            scope: scope.clone(),
+        };
+        let r = self.scoped_map.read();
+        let boxed = r.get(&key)?;
+
+        boxed.downcast_ref::<Arc<T>>().cloned()
+    }
+
+    /// Remove a client by interface type; returns the removed client if it was present.
+    pub fn remove<T>(&self) -> Option<Arc<T>>
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let type_key = TypeKey::of::<T>();
+        let mut w = self.map.write();
+        let boxed = w.remove(&type_key)?;
+        boxed.downcast::<Arc<T>>().ok().map(|b| *b)
+    }
+
+    /// Remove a scoped client by interface type + scope; returns the removed client if it was present.
+    pub fn remove_scoped<T>(&self, scope: &ClientScope) -> Option<Arc<T>>
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        let key = ScopedKey {
+            type_key: TypeKey::of::<T>(),
+            scope: scope.clone(),
+        };
+        let mut w = self.scoped_map.write();
+        let boxed = w.remove(&key)?;
+        boxed.downcast::<Arc<T>>().ok().map(|b| *b)
+    }
+
+    /// Clear everything (useful in tests).
+    pub fn clear(&self) {
+        self.map.write().clear();
+        self.scoped_map.write().clear();
+    }
+
+    /// Introspection: (total entries).
+    pub fn len(&self) -> usize {
+        self.map.read().len() + self.scoped_map.read().len()
+    }
+
+    /// Check if the hub is empty.
+    pub fn is_empty(&self) -> bool {
+        self.map.read().is_empty() && self.scoped_map.read().is_empty()
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use toolkit_gts::gts_id;
+
+    #[async_trait::async_trait]
+    trait TestApi: Send + Sync {
+        async fn id(&self) -> usize;
+    }
+
+    struct ImplA(usize);
+    #[async_trait::async_trait]
+    impl TestApi for ImplA {
+        async fn id(&self) -> usize {
+            self.0
+        }
+    }
+
+    #[tokio::test]
+    async fn register_and_get_dyn_trait() {
+        let hub = ClientHub::new();
+        let api: Arc<dyn TestApi> = Arc::new(ImplA(7));
+        hub.register::<dyn TestApi>(api.clone());
+
+        let got = hub.get::<dyn TestApi>().unwrap();
+        assert_eq!(got.id().await, 7);
+        assert_eq!(Arc::as_ptr(&api), Arc::as_ptr(&got));
+    }
+
+    #[tokio::test]
+    async fn remove_works() {
+        let hub = ClientHub::new();
+        let api: Arc<dyn TestApi> = Arc::new(ImplA(42));
+        hub.register::<dyn TestApi>(api);
+
+        assert!(hub.get::<dyn TestApi>().is_ok());
+
+        let removed = hub.remove::<dyn TestApi>();
+        assert!(removed.is_some());
+        assert!(hub.get::<dyn TestApi>().is_err());
+    }
+
+    #[tokio::test]
+    async fn try_get_local_ignores_a_remote_proxy() {
+        let hub = ClientHub::new();
+        let proxy: Arc<dyn TestApi> = Arc::new(ImplA(1));
+        hub.register_remote_proxy::<dyn TestApi>(proxy);
+
+        // Reachable for business calls...
+        assert!(hub.try_get::<dyn TestApi>().is_some());
+        assert!(hub.get::<dyn TestApi>().is_ok());
+        // ...but not a local implementation. This is what stops a second
+        // consumer of the same contract from reporting `WireOutcome::Local`
+        // and marking the dependency readiness-resolved while the provider is
+        // still absent.
+        assert!(hub.try_get_local::<dyn TestApi>().is_none());
+        assert!(hub.has_remote_proxy::<dyn TestApi>());
+    }
+
+    #[tokio::test]
+    async fn try_get_local_sees_a_plain_registration() {
+        let hub = ClientHub::new();
+        let local: Arc<dyn TestApi> = Arc::new(ImplA(2));
+        hub.register::<dyn TestApi>(local);
+
+        assert!(hub.try_get_local::<dyn TestApi>().is_some());
+        assert!(!hub.has_remote_proxy::<dyn TestApi>());
+    }
+
+    #[tokio::test]
+    async fn overwrite_replaces_atomically() {
+        let hub = ClientHub::new();
+        hub.register::<dyn TestApi>(Arc::new(ImplA(1)));
+
+        let old = hub.get::<dyn TestApi>().unwrap();
+        assert_eq!(old.id().await, 1);
+
+        hub.register::<dyn TestApi>(Arc::new(ImplA(2)));
+
+        let new = hub.get::<dyn TestApi>().unwrap();
+        assert_eq!(new.id().await, 2);
+
+        // Old Arc is still valid
+        assert_eq!(old.id().await, 1);
+    }
+
+    #[tokio::test]
+    async fn scoped_register_and_get_dyn_trait() {
+        let hub = ClientHub::new();
+        let scope_a = ClientScope::gts_id(gts_id!(
+            "cf.core.toolkit.plugins.v1~cf.core.tenant_resolver.plugin.v1~contoso.app._.plugin.v1.0"
+        ));
+        let scope_b = ClientScope::gts_id(gts_id!(
+            "cf.core.toolkit.plugins.v1~cf.core.tenant_resolver.plugin.v1~fabrikam.app._.plugin.v1.0"
+        ));
+
+        let api_a: Arc<dyn TestApi> = Arc::new(ImplA(1));
+        let api_b: Arc<dyn TestApi> = Arc::new(ImplA(2));
+
+        hub.register_scoped::<dyn TestApi>(scope_a.clone(), api_a.clone());
+        hub.register_scoped::<dyn TestApi>(scope_b.clone(), api_b.clone());
+
+        assert_eq!(
+            hub.get_scoped::<dyn TestApi>(&scope_a).unwrap().id().await,
+            1
+        );
+        assert_eq!(
+            hub.get_scoped::<dyn TestApi>(&scope_b).unwrap().id().await,
+            2
+        );
+    }
+
+    #[test]
+    fn scoped_get_is_independent_from_global_get() {
+        let hub = ClientHub::new();
+        let scope = ClientScope::gts_id(gts_id!(
+            "cf.core.toolkit.plugins.v1~cf.core.tenant_resolver.plugin.v1~fabrikam.app._.plugin.v1.0"
+        ));
+        hub.register::<str>(Arc::from("global"));
+        hub.register_scoped::<str>(scope.clone(), Arc::from("scoped"));
+
+        assert_eq!(&*hub.get::<str>().unwrap(), "global");
+        assert_eq!(&*hub.get_scoped::<str>(&scope).unwrap(), "scoped");
+    }
+
+    #[test]
+    fn try_get_scoped_returns_some_on_hit() {
+        let hub = ClientHub::new();
+        let scope = ClientScope::gts_id(gts_id!(
+            "cf.core.toolkit.plugins.v1~cf.core.tenant_resolver.plugin.v1~contoso.app._.plugin.v1.0"
+        ));
+        hub.register_scoped::<str>(scope.clone(), Arc::from("scoped"));
+
+        let got = hub.try_get_scoped::<str>(&scope);
+        assert_eq!(got.as_deref(), Some("scoped"));
+    }
+
+    #[test]
+    fn try_get_scoped_returns_none_on_miss() {
+        let hub = ClientHub::new();
+        let scope = ClientScope::gts_id(gts_id!(
+            "cf.core.toolkit.plugins.v1~cf.core.tenant_resolver.plugin.v1~fabrikam.app._.plugin.v1.0"
+        ));
+
+        let got = hub.try_get_scoped::<str>(&scope);
+        assert!(got.is_none());
+    }
+}

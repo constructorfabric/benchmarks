@@ -1,0 +1,171 @@
+skip_dirs = [".cargo", "target", "testing/e2e"]
+
+# ── Repo ───────────────────────────────────────────────────────────────────
+
+[[categories]]
+id    = "repo"
+label = "Repository"
+
+[[categories.buckets]]
+id       = "(root)"
+pattern  = "*.md"
+
+[[categories.buckets]]
+id       = ".github"
+pattern  = ".github/**/*.md"
+
+# ── Constructor Studio ───────────────────────────────────────────────────────
+
+[[categories]]
+id    = "cf-studio"
+label = "Constructor Studio"
+
+[[categories.buckets]]
+id      = "agents"
+pattern = ".agents/**/*.md"
+
+[[categories.buckets]]
+id      = "claude"
+pattern = ".claude/**/*.md"
+
+[[categories.buckets]]
+id      = "cursor"
+pattern = ".cursor/**/*.md"
+
+[[categories.buckets]]
+id      = ".codex"
+pattern = ".codex/**/*.md"
+
+[[categories.buckets]]
+id      = "cf-studio"
+pattern = ".cf-studio/**/*.md"
+
+[[categories.buckets]]
+id      = "cf-studio-config"
+pattern = ".cf-studio/config/**/*.md"
+
+[[categories.buckets]]
+id      = "cf-studio-core"
+pattern = ".cf-studio/.core/**/*.md"
+
+[[categories.buckets]]
+id      = "cf-studio-gen"
+pattern = ".cf-studio/.gen/**/*.md"
+
+[[categories.buckets]]
+id      = "windsurf"
+pattern = ".windsurf/**/*.md"
+
+# ── ToolKit ────────────────────────────────────────────────────────────────────
+
+[[categories]]
+id    = "toolkit"
+label = "ToolKit"
+
+[[categories.buckets]]
+id      = "docs-adrs"
+pattern = "docs/adrs/**/*.md"
+
+[[categories.buckets]]
+id      = "docs-arch-authorization"
+pattern = "docs/arch/authorization/**/*.md"
+
+[[categories.buckets]]
+id      = "docs-arch-errors"
+pattern = "docs/arch/errors/**/*.md"
+
+[[categories.buckets]]
+id      = "docs-arch"
+pattern = "docs/arch/**/*.md"
+
+[[categories.buckets]]
+id      = "docs-checklists"
+pattern = "docs/checklists/**/*.md"
+
+[[categories.buckets]]
+id      = "docs-toolkit-unified-system"
+pattern = "docs/toolkit_unified_system/**/*.md"
+
+[[categories.buckets]]
+id      = "docs-pr-review"
+pattern = "docs/pr-review/**/*.md"
+
+[[categories.buckets]]
+id      = "docs-security"
+pattern = "docs/security/**/*.md"
+
+[[categories.buckets]]
+id      = "docs-spec-templates"
+pattern = "docs/spec-templates/**/*.md"
+
+[[categories.buckets]]
+id      = "docs"
+pattern = "docs/**/*.md"
+
+[[categories.buckets]]
+id      = "examples"
+pattern = "examples/**/*.md"
+
+[[categories.buckets]]
+id      = "guidelines"
+pattern = "guidelines/**/*.md"
+
+[[categories.buckets]]
+id      = "tools"
+pattern = "tools/**/*.md"
+
+[[categories.buckets]]
+id      = "libs"
+pattern = "libs/**/*.md"
+
+# ── Gears ───────────────────────────────────────────────────────────────────
+
+[[categories]]
+id    = "gears"
+label = "Gears"
+
+[[categories.buckets]]
+id      = "gears-system"
+pattern = "gears/system/*/**/*.md"
+
+[[categories.buckets]]
+id      = "gears-other"
+pattern = "gears/*/**/*.md"
+
+# ── Control Plane Views ─────────────────────────────────────────────────────
+
+[[views]]
+id = "claude"
+label = "Claude view"
+default_depth = 5
+start_paths = ["CLAUDE.md", ".claude/**/*.md"]
+
+[[views]]
+id = "codex"
+label = "Codex view"
+default_depth = 5
+start_paths = ["AGENTS.md", ".agents/**/*.md", ".codex/**/*.md"]
+
+[[views]]
+id = "windsurf"
+label = "Windsurf view"
+default_depth = 5
+start_paths = ["AGENTS.md", ".windsurf/**/*.md"]
+
+[[views]]
+id = "cursor"
+label = "Cursor view"
+default_depth = 5
+start_paths = [".cursor/**/*.md"]
+
+[[views]]
+id = "copilot"
+label = "Copilot view"
+default_depth = 5
+start_paths = [".github/copilot-instructions.md", ".github/instructions/**/*.instructions.md", ".github/prompts/**/*.md", ".github/agents/**/*.md"]
+
+[[views]]
+id = "antigravity"
+label = "Antigravity view"
+default_depth = 5
+start_paths = ["AGENTS.md", "GEMINI.md", ".agents/**/*.md"]

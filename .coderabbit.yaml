@@ -1,0 +1,5 @@
+# Reviews are triggered by hand, one PR per hour (CodeRabbit rate limit):
+# comment "@coderabbitai full review" on the PR.
+reviews:
+  auto_review:
+    enabled: false

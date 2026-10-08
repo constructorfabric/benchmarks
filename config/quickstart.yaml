@@ -1,0 +1,601 @@
+# Updated: 2026-04-16 by Constructor Tech
+# CF/Gears Example Server Configuration
+#
+# Database Architecture Overview:
+# ===============================
+#
+# CF/Gears example server uses a centralized DbManager that:
+# 1. Loads global database server templates from `database.servers`
+# 2. For each gear, merges server template with gear-specific overrides
+# 3. Creates isolated database connections per gear
+# 4. Caches DbHandle instances for reuse within the same gear
+#
+# Key principles:
+# - Each gear gets its own database connection (no sharing)
+# - SQLite gears automatically get their own database file
+# - Configuration follows a clear precedence hierarchy
+# - Environment variables are expanded (${VAR_NAME})
+# - All paths are resolved relative to server.home_dir
+
+# Core server configuration (global section)
+server:
+  home_dir: "~/.cf-gears"
+
+# Database configuration (DbManager architecture)
+#
+# The database config has two levels:
+# 1. Global "servers" - shared connection templates that gears can reference
+# 2. Per-gear configs - specific database settings for each gear
+#
+# Configuration precedence (highest to lowest):
+# - Gear `params` map (highest priority)
+# - Gear DSN query params
+# - Gear fields (host, port, user, etc.)
+# - Gear DSN base
+# - Server `params` map
+# - Server DSN query params
+# - Server fields
+# - Server DSN base (lowest priority)
+#
+database:
+  # Global database servers - reusable connection templates
+  # These define shared settings that multiple gears can inherit
+  servers:
+    # SQLite server template for user data gears
+    # Note: No DSN or file specified here - gears specify their own database files
+    # This prevents accidental sharing of SQLite databases between gears
+    sqlite_users:
+      engine: "sqlite"
+      # SQLite PRAGMA parameters applied to all connections using this server
+      params:
+        WAL: "true"              # Enable Write-Ahead Logging for better concurrency
+        synchronous: "NORMAL"    # Balance between safety and performance
+        busy_timeout: "5000"     # Wait 5 seconds for locked database
+      # Connection pool settings shared by all gears using this server
+      pool:
+        max_conns: 5             # Maximum 5 concurrent connections
+        acquire_timeout: "30s"   # Timeout when acquiring connection from pool
+
+  # Global database options
+  # auto_provision: true       # (default) Create directories automatically for SQLite files
+  # auto_provision: false      # Fail if directories don't exist
+
+# Logging configuration (global section)
+logging:
+  # global section
+  default:
+    console_level: info
+    file: "logs/cf-gears.log"
+    file_level: info
+    max_age_days: 28
+    max_backups: 3
+    max_size_mb: 10
+  sqlx:
+    console_level: debug
+    file: "logs/sql.log"
+    file_level: debug
+  api-gateway:
+    console_level: debug
+    file: "logs/api.log"
+    file_level: debug
+    max_age_days: 28
+    max_backups: 3
+    max_size_mb: 100
+
+
+# Per-gear configurations using new structure
+gears:
+  api-gateway:
+    # No database needed for api-gateway
+    config:
+      bind_addr: "127.0.0.1:8087"
+      enable_docs: true
+      cors_enabled: false
+      prefix_path: "/cf"
+      # OpenAPI Documentation Configuration
+      openapi:
+        title: "CF/Gears Example Server API"
+        version: "0.1.0"
+        description: "CF/Gears Example Server API Documentation"
+      defaults:
+        body_limit_bytes: 64000000
+
+      # Authentication: disabled for local development (uses default root SecurityContext).
+      # Set to false to enable bearer-token auth via authn-resolver pipeline below.
+      auth_disabled: true
+
+      # ----------------------------------------------------------------------
+      # Zone-based throttling for the mini-chat "create chat" endpoint
+      #   POST /mini-chat/v1/chats  (operation_id: mini_chat.create_chat)
+      #   - rate limit:     10 requests/second (per client IP)
+      #   - in-flight limit: 100 concurrent requests (per client IP)
+      #
+      # NOTE on paths: the mini-chat gear mounts its routes under url_prefix
+      # "/mini-chat" (gear default). The gateway also strips its own `prefix_path`
+      # (/cf) before matching, so the runtime path is "/mini-chat/v1/chats"
+      # (the public URL is "/cf/mini-chat/v1/chats").
+      #
+      # NOTE on enforcement (see middleware/throttling.rs): enforcement is driven
+      # by the `ThrottlingSpec` attached to the operation IN CODE, which references
+      # these zone names. That binding is already wired in the mini-chat gear
+      # (create_chat):
+      #   ThrottlingSpec {
+      #     rate_limit_zone:          "rl_mini_chat_chat",
+      #     in_flight_limit_zone:     "ifl_mini_chat_chat",
+      #     require_security_context: false,   // IP-keyed => enforced before auth
+      #     dry_run:                  true,    // observe-only: logs would-be
+      #   }                                    // rejections, never returns 429
+      #
+      # NOTE: because the binding sets `dry_run: true`, these zones only observe
+      # and log — nothing is actually rejected until the gear flips it to false.
+      #
+      # The key strategy (`ip` vs `identity`) lives in the zone `key:` block
+      # below; `ip` is used so it works with auth_disabled (no identity available
+      # pre-auth). To throttle per authenticated subject, switch both zones to
+      # `key: { type: identity }`, set the spec to `require_security_context: true`
+      # on an authenticated operation, and set `auth_disabled: false`; the router
+      # build rejects an identity zone on an anonymous operation or with
+      # `auth_disabled: true`, because every client would share one key.
+      # ----------------------------------------------------------------------
+      rate_limit_zones:
+        rl_mini_chat_chat:
+          rate_limit: 10/s          # steady-state: 10 requests per second
+          burst_limit: 10           # token-bucket capacity (max burst)
+          response_status_code: 429 # Too Many Requests
+          response_retry_after: auto # compute Retry-After from the token bucket
+          key:
+            type: ip                # one bucket per client IP
+          max_keys: 10000           # max distinct IPs tracked
+
+      in_flight_limit_zones:
+        ifl_mini_chat_chat:
+          in_flight_limit: 100      # max concurrent in-flight requests per IP
+          backlog_limit: 0          # no queue: reject immediately once full
+          backlog_timeout: 0s       # (unused when backlog_limit = 0)
+          response_status_code: 429
+          key:
+            type: ip
+          max_keys: 10000
+
+  gear-orchestrator:
+    config: {}
+    # No configuration needed for the gear orchestrator
+
+  grpc-hub:
+    config:
+      # Use ephemeral port; OoP gears receive the actual bound address from master host
+      listen_addr: "uds:///tmp/cf-gears-grpc"
+
+  # AuthN pipeline - used when auth_disabled: false.
+  # AuthZ pipeline - used always (with default root SecurityContext when auth is disabled).
+  # Requires --features static-authn,static-authz for the static plugins.
+  authn-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  authz-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      mode: accept_all
+      s2s_credentials:
+        - client_id: "mini-chat"
+          client_secret: "mini-chat-dev-secret"
+
+  static-authz-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  license-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  # Requires --features static-license.
+  static-license-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      # Deny by default: no rule, no grant. Rules are left empty because no gear
+      # gates on a licence yet -- a rule must name registered Subject/Resource
+      # contract types, and the resolver rejects a check against an unregistered
+      # one. See the plugin README for a worked rule set.
+      grants: []
+
+  account-management:
+    database:
+      server: "sqlite_users"
+      file: "account_management.db"
+    config:
+      root_tenant_type:
+        gts_id: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+        idp_provisioning: false
+      bootstrap:
+        # Matches static-tr-plugin's `e2e-root` so AM's tenants table
+        # ends up holding the same root id the platform middleware
+        # already knows about, letting E2E callers POST child tenants
+        # under it without a separate seeding step.
+        root_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+        root_name: "e2e-root"
+        idp_wait_timeout: "5m"
+        idp_retry_backoff_initial: "2s"
+        idp_retry_backoff_max: "30s"
+        strict: false
+      idp:
+        # Fail-closed on missing IdP client: `static-idp-plugin` is
+        # enabled in this E2E config so the user-management surface
+        # (`/tenants/{id}/users`) MUST resolve to a live plugin, not
+        # the silent `NoopIdpProvider` fallback that returns 501. AM's
+        # `deps = [...]` does not name `static-idp-plugin` directly (AM
+        # is plugin-impl-agnostic), so without `idp.required=true` the
+        # ToolKit topo-sort could initialise AM before the plugin and
+        # leave it serving 501s for the lifetime of the process. With
+        # `required=true` AM aborts startup loud and fast if it can't
+        # see the plugin — the operator then knows to investigate
+        # rather than silently shipping a half-wired stack.
+        required: true
+
+  chat-engine:
+    database:
+      server: "sqlite_users"
+      file: "chat_engine.db"
+    config: {}
+
+  mini-chat:
+    # Gear-specific database configuration
+    database:
+      server: "sqlite_users"
+      file: "mini_chat.db"
+    config:
+      # S2S credentials for obtaining SecurityContext
+      # that will be used for communication with other gears.
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-dev-secret"
+      # Provider registry. Key = provider_id (matches ModelCatalogEntry.provider_id).
+      # `upstream_alias` is optional — defaults to `host` when omitted.
+      providers:
+        openai:
+          kind: openai_responses
+          storage_kind: openai
+          host: "api.openai.com"
+          auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
+          auth_config:
+            header: "Authorization"
+            prefix: "Bearer "
+            secret_ref: "openai-key"
+
+      # ── Azure OpenAI example (uncomment and set your endpoint) ──────────
+      #   azure_openai:
+      #     kind: openai_responses
+      #     storage_kind: azure                             # required; azure needs api_version
+      #     host: "<your-resource>.openai.azure.com"       # Azure endpoint
+      #     # upstream_alias: "custom-alias"               # optional, defaults to host
+      #     api_path: "/openai/v1/responses"
+      #     api_version: "2025-03-01-preview"             # required for storage_kind: azure
+      #     auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
+      #     auth_config:
+      #       header: "api-key"
+      #       prefix: ""
+      #       secret_ref: "azure-openai-key"
+      #
+      # ── Per-tenant Azure example (each tenant has its own endpoint) ─────
+      #   azure_openai_tenant_a:
+      #     kind: openai_responses
+      #     storage_kind: azure                             # required; azure needs api_version
+      #     host: "tenant-a.openai.azure.com"
+      #     api_path: "/openai/v1/responses"
+      #     api_version: "2025-03-01-preview"             # required for storage_kind: azure
+      #     auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
+      #     auth_config:
+      #       header: "api-key"
+      #       prefix: ""
+      #       secret_ref: "azure-openai-key-tenant-a"
+      #   azure_openai_tenant_b:
+      #     kind: openai_responses
+      #     storage_kind: azure                             # required; azure needs api_version
+      #     host: "tenant-b.openai.azure.com"
+      #     api_path: "/openai/v1/responses"
+      #     api_version: "2025-03-01-preview"             # required for storage_kind: azure
+      #     auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
+      #     auth_config:
+      #       header: "api-key"
+      #       prefix: ""
+      #       secret_ref: "azure-openai-key-tenant-b"
+
+  resource-group:
+    database:
+      server: "sqlite_users"
+      file: "resource_group.db"
+    config: {}
+
+  simple-user-settings:
+    # Gear-specific database configuration
+    database:
+      server: "sqlite_users"
+      file: "settings.db"
+    config:
+      max_field_length: 100
+
+  users-info:
+    # Gear-specific database configuration
+    database:
+      # Reference to global server template defined above
+      server: "sqlite_users"               # Inherits params and pool settings from sqlite_users
+
+      # Gear-specific database file (required for SQLite gears)
+      file: "users_info.db"                # Creates: ~/.cf-gears/users_info/users_info.db
+
+      # Gear can override server settings:
+      # params:
+      #   synchronous: "FULL"              # Would override server's "NORMAL" setting
+      #   custom_pragma: "value"           # Would add new PRAGMA setting
+      # pool:
+      #   max_conns: 10                    # Would override server's max_conns: 5
+
+      # Alternative ways to specify database location:
+      # path: "/absolute/path/to/db.sqlite" # Use absolute path instead of file
+      # dsn: "sqlite://custom.db?WAL=false" # Complete DSN override (ignores server)
+
+      # For other database types (PostgreSQL, MySQL):
+      # host: "localhost"                  # Override server host
+      # port: 5432                         # Override server port
+      # user: "app_user"                   # Override server user
+      # password: "${DB_PASSWORD}"         # Environment variable expansion
+      # dbname: "users_db"                 # Override server database name
+
+    # Gear-specific application configuration
+    config:
+      default_page_size: 5
+      max_page_size: 100
+      audit_base_url: "http://localhost:9090"
+      notifications_base_url: "http://localhost:9091"
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+  static-tr-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 20
+      # Tenant tree configuration (example: company with 2 divisions, each with departments)
+      tenants:
+        # Root tenant — structural anchor, also used by auth-disabled mode
+        # (must match DEFAULT_TENANT_ID in toolkit-security). The tenant tree
+        # has exactly one root.
+        - id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          name: "default"
+          parent_id: null
+          status: active
+
+        # Business sub-root (company level) under the structural root
+        - id: "00000000-0000-0000-0000-000000000001"
+          name: "company-root"
+          parent_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          status: active
+
+        # Division 1: Engineering
+        - id: "00000000-0000-0000-0000-000000000002"
+          name: "engineering"
+          parent_id: "00000000-0000-0000-0000-000000000001"
+          status: active
+
+        # Division 2: Sales
+        - id: "00000000-0000-0000-0000-000000000005"
+          name: "sales"
+          parent_id: "00000000-0000-0000-0000-000000000001"
+          status: active
+
+        # Department under Engineering: Frontend (soft-deleted)
+        - id: "00000000-0000-0000-0000-000000000003"
+          name: "frontend"
+          parent_id: "00000000-0000-0000-0000-000000000002"
+          status: deleted
+
+        # Department under Engineering: Backend
+        - id: "00000000-0000-0000-0000-000000000004"
+          name: "backend"
+          parent_id: "00000000-0000-0000-0000-000000000002"
+          status: active
+
+        # Department under Sales: Enterprise
+        - id: "00000000-0000-0000-0000-000000000006"
+          name: "enterprise"
+          parent_id: "00000000-0000-0000-0000-000000000005"
+          status: active
+
+  github-mirror:
+    database:
+      server: "sqlite_users"
+      file: "github_mirror.db"
+    config:
+      api_base_url: "https://api.github.com"
+
+  types-registry:
+    database:
+      server: "sqlite_users"
+      file: "types_registry.db"
+  credstore:
+    database:
+      server: "sqlite_users"
+      file: "credstore.db"
+    config:
+      # Gateway selects its value-store backend plugin by GTS vendor;
+      # must match static-credstore-plugin (default "constructorfabric").
+      vendor: "constructorfabric"
+
+  settings-service:
+    database:
+      server: "sqlite_users"
+      file: "settings-service.db"
+    # The empty section is deliberate and required. The gear reads its
+    # configuration fail-closed, so an absent `config:` key aborts startup
+    # rather than defaulting: bootstrap values are deployment-owned and are
+    # never themselves managed settings, so there is nothing to fall back to.
+    #
+    # Nothing is required today -- the only field, `cache_ttl_seconds`, has a
+    # value fixed by the design (30s) rather than by the operator. The section
+    # exists so that the first genuinely required value fails loudly here
+    # instead of being silently invented.
+    config: {}
+
+  # The credstore gateway reads a secret's metadata from its own DB, so the
+  # values below are not readable on their own (issue #5094). Until that is
+  # fixed, set each secret through the API after every start (the first run
+  # needs POST instead of PUT); mini-chat retries the deferred provider.
+  # Read the key with -s so it never lands in shell history or `ps`, and
+  # pipe the body through -d @- so it never appears as a curl argument:
+  #   read -s -p 'openai key: ' KEY && printf '{"value":"%s","sharing":"tenant"}' "$KEY" \
+  #     | curl -X PUT http://localhost:8087/cf/credstore/v1/secrets/openai-key \
+  #         -H 'Authorization: Bearer dev' -H 'content-type: application/json' \
+  #         -H 'If-Match: *' -d @-
+  static-credstore-plugin:
+    config:
+      secrets:
+        - tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          key: "openai-key"
+          value: "sk-test-e2e-fake-key"
+        - tenant_id: "00000000-df51-5b42-9538-d2b56b7ee953"
+          key: "azure-openai-key"
+          value: "REPLACE_WITH_AZURE_KEY"
+
+  file-storage:
+    # SQLite backend — no Postgres required for local / quickstart runs.
+    database:
+      server: "sqlite_users"
+      file: "file_storage.db"
+    config:
+      sidecar_base_url: "http://localhost:8099"
+      storage_root: "./.file-storage-data"
+      signing_key_seed: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      # Quickstart exercises the production default: sweep the orphan/expired
+      # backlog in the background.
+      enable_background_sweep: true
+
+  # File parser gear configuration (no database needed)
+  file-parser:
+    config:
+      allowed_local_base_dir: /tmp
+
+# OpenTelemetry configuration (resource identity, tracing, metrics)
+opentelemetry:
+  # Shared resource identity (attached to all traces and metrics)
+  resource:
+    service_name: "cf-gears-api"
+    attributes:
+      service.version: "1.3.7"
+      deployment.environment: "dev"
+      service.namespace: "cf-gears"
+
+  # Default exporter shared by tracing and metrics.
+  # Per-signal `exporter` fields override this when present.
+  exporter:
+    kind: "otlp_grpc"  # or "otlp_http"
+    endpoint: "http://127.0.0.1:4317"
+    headers:
+      # Add any required headers, e.g., for authentication
+      # authorization: "Bearer your-token"
+      uptrace-dsn: "http://project1_secret@localhost:14318?grpc=14317"
+    timeout_ms: 5000
+
+  # Tracing configuration
+  tracing:
+    enabled: false
+
+    # Per-signal exporter override (fully replaces the shared exporter)
+    exporter:
+      kind: "otlp_grpc"
+      endpoint: "http://127.0.0.1:14317"  # Jaeger OTLP gRPC endpoint
+
+    # Sampling configuration
+    sampler:
+      parent_based_ratio: # parent_based_always_on | parent_based_ratio | always_on | always_off
+        ratio: 1.0  # Sample 100% of traces
+
+    # Propagation configuration
+    propagation:
+      w3c_trace_context: true  # Enable W3C Trace Context propagation
+
+    # HTTP-specific options
+    http:
+      inject_request_id_header: "x-request-id"
+      # Credential-bearing headers ("authorization", "cookie", …) must never
+      # be listed here: whatever is recorded reaches the trace collector.
+      record_headers: [ "user-agent", "x-forwarded-for" ]
+
+    # Add top-level trace_id / span_id to JSON log records so a backend can
+    # link a log line to its span. Off by default: it costs a context lookup
+    # per event.
+    logs_correlation:
+      inject_trace_ids_into_logs: true
+
+  # Metrics configuration
+  metrics:
+    enabled: false
+    # cardinality_limit: 2000  # Max distinct attribute combinations per instrument (SDK default if omitted)
+
+# Example configurations for different database scenarios:
+#
+# Example 1: PostgreSQL server with multiple gears
+# ==================================================
+# database:
+#   servers:
+#     main_postgres:
+#       host: "localhost"
+#       port: 5432
+#       user: "cf_gears"
+#       password: "${POSTGRES_PASSWORD}"  # From environment variable
+#       params:
+#         sslmode: "require"
+#         application_name: "cf_gears"
+#       pool:
+#         max_conns: 20
+#         acquire_timeout: "30s"
+# gears:
+#   users_gear:
+#     database:
+#       server: "main_postgres"
+#       dbname: "users_db"              # Each gear gets its own database
+#   orders_gear:
+#     database:
+#       server: "main_postgres"
+#       dbname: "orders_db"             # Separate database for orders
+#       pool:
+#         max_conns: 10                 # Gear-specific pool override
+#
+# Example 2: Mixed database types
+# ===============================
+# database:
+#   servers:
+#     postgres_main:
+#       dsn: "postgres://user:${PG_PASS}@localhost:5432/main"
+#     redis_cache:
+#       dsn: "redis://localhost:6379/0"
+# gears:
+#   user_service:
+#     database:
+#       server: "postgres_main"
+#       dbname: "users"
+#   cache_service:
+#     database:
+#       server: "redis_cache"
+#
+# Example 3: Complete DSN override
+# ================================
+# gears:
+#   analytics:
+#     database:
+#       dsn: "postgres://analytics:${ANALYTICS_PASSWORD}@analytics-db:5432/metrics?sslmode=require"
+#       # When DSN is specified, server reference is ignored
+#
+# Example 4: No database gear
+# =============================
+# gears:
+#   static_files:
+#     # No database section - gear won't get database access
+#     config:
+#       static_dir: "/var/www/static"
