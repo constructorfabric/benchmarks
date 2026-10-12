@@ -22,6 +22,9 @@ default = []
 k8s = ["dep:kube", "dep:k8s-openapi"]
 
 [dependencies]
+# Mini-chat SDK: plugin contracts, policy/usage/audit models, GTS ids
+mini-chat-sdk = { workspace = true }
+
 # AuthN resolver for S2S client credentials exchange
 authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37", path = "../../system/authn-resolver/authn-resolver-sdk" }
 
@@ -106,6 +109,8 @@ k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
 chrono = { workspace = true }
+# Router tests drive the REST surface with `ServiceExt::oneshot`.
+tower = { workspace = true, features = ["util"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
 
