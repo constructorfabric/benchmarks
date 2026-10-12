@@ -25,6 +25,9 @@ k8s = ["dep:kube", "dep:k8s-openapi"]
 # AuthN resolver for S2S client credentials exchange
 authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37", path = "../../system/authn-resolver/authn-resolver-sdk" }
 
+# Public contracts of this gear
+mini-chat-sdk = { workspace = true }
+
 # AuthZ resolver for authorization (PEP flow)
 authz-resolver-sdk = { workspace = true }
 
@@ -105,8 +108,14 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
-opentelemetry_sdk = { workspace = true, features = ["testing"] }
+serde-saphyr = { workspace = true }
 temp-env = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+uuid = { workspace = true, features = ["v4"] }
+types-registry-sdk = { workspace = true, features = ["test-util"] }
+# Only so the registry can resolve `oagw`'s dependencies in `gear_registration.rs`.
+credstore = { workspace = true }
+tenant-resolver = { workspace = true }
 
 

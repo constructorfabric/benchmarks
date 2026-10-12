@@ -490,16 +490,14 @@ pub fn parse_cursor_value(kind: FieldKind, s: &str) -> Result<sea_orm::Value, St
             V::Uuid(Some(u))
         }
         FieldKind::DateTimeUtc => {
-            if let Ok(dt) =
-                time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-            {
-                V::TimeDateTimeWithTimeZone(Some(dt))
-            } else {
-                let dt = chrono::DateTime::parse_from_rfc3339(s)
-                    .map_err(|_| "invalid datetime in cursor".to_owned())?
-                    .with_timezone(&chrono::Utc);
-                V::ChronoDateTimeUtc(Some(dt))
-            }
+            // Bind as chrono UTC, exactly like `$filter` datetime values
+            // (`odata_value_to_sea_value`): on SQLite the bound text must be
+            // the same encoding as the filter binds, or keyset comparisons
+            // against stored values diverge from `$filter` comparisons.
+            let dt = chrono::DateTime::parse_from_rfc3339(s)
+                .map_err(|_| "invalid datetime in cursor".to_owned())?
+                .with_timezone(&chrono::Utc);
+            V::ChronoDateTimeUtc(Some(dt))
         }
         FieldKind::Date => {
             let d = s
@@ -982,5 +980,23 @@ mod cursor_codec_tests {
         assert!(
             encode_cursor_value(&sea_orm::Value::SmallInt(Some(2)), FieldKind::String).is_err()
         );
+    }
+
+    // A datetime cursor binds as chrono UTC, the same type `$filter` binds,
+    // whichever Value type the mapper extracted (see `parse_cursor_value`).
+    #[test]
+    fn datetime_cursor_round_trips_as_chrono_utc() {
+        let time_value = sea_orm::Value::TimeDateTimeWithTimeZone(Some(
+            time::OffsetDateTime::from_unix_timestamp_nanos(1_735_689_610_422_670_000)
+                .expect("valid instant"),
+        ));
+        let chrono_value = sea_orm::Value::ChronoDateTimeUtc(Some(
+            chrono::DateTime::from_timestamp(1_735_689_610, 422_670_000).expect("valid instant"),
+        ));
+        for value in [time_value, chrono_value.clone()] {
+            let token = encode_cursor_value(&value, FieldKind::DateTimeUtc).expect("encodes");
+            let parsed = parse_cursor_value(FieldKind::DateTimeUtc, &token).expect("parses");
+            assert_eq!(parsed, chrono_value);
+        }
     }
 }

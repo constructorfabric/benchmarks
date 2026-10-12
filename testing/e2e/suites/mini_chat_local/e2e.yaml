@@ -1,0 +1,20 @@
+# Self-managed black-box suite for the mini-chat gear (S1: foundation + Models API;
+# S2: chats, messages, reactions, isolation;
+# later slices add streaming, quota, attachments, ...).
+#
+# The suite's own conftest.py starts a mock OpenAI-compatible provider, writes a
+# generated server config (temp home_dir, SQLite, static_tokens authn) and starts
+# the example server, so it cannot share the common e2e-launcher server.
+#
+#   make e2e-local SUITE=mini-chat-local
+#   python3 -m pytest testing/e2e/suites/mini_chat_local -q
+suite: mini-chat-local
+launcher: pytest
+default_features: false
+features:
+  - mini-chat
+  - static-authn
+  - static-authz
+  - single-tenant
+  - static-credstore
+test_path: testing/e2e/suites/mini_chat_local
