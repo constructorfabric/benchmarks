@@ -28,6 +28,9 @@ authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.3
 # AuthZ resolver for authorization (PEP flow)
 authz-resolver-sdk = { workspace = true }
 
+# Mini-chat SDK (plugin contracts, models)
+mini-chat-sdk = { workspace = true }
+
 # OAGW SDK — proxy calls, SSE stream, gateway errors
 oagw-sdk = { workspace = true }
 
@@ -98,6 +101,11 @@ toolkit-db-macros = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+toolkit-odata-macros = { workspace = true }
+schemars = { workspace = true }
+async-stream = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
 heck = { workspace = true }
 secrecy = { workspace = true }
 # k8s leader election (optional, behind k8s feature)
@@ -105,6 +113,9 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
+tower = { workspace = true }
+httpmock = { workspace = true }
+tempfile = { workspace = true }
 chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
