@@ -31,6 +31,9 @@ authz-resolver-sdk = { workspace = true }
 # OAGW SDK — proxy calls, SSE stream, gateway errors
 oagw-sdk = { workspace = true }
 
+# Mini Chat SDK — policy/usage/audit models and plugin APIs
+mini-chat-sdk = { workspace = true }
+
 # Types registry for plugin discovery
 types-registry-sdk = { workspace = true }
 types-registry = { workspace = true }
@@ -71,6 +74,8 @@ http = { workspace = true }
 
 # Time handling
 time = { workspace = true }
+chrono = { workspace = true }
+arc-swap = { workspace = true }
 
 # UUID support
 uuid = { workspace = true }
@@ -105,8 +110,15 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
-
-
+tower = { workspace = true, features = ["util"] }
+http-body-util = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+# `testing::MockTypesRegistryClient` for plugin-gateway tests
+types-registry-sdk = { workspace = true, features = ["test-util"] }
+# Parses config/mini-chat.yaml in config tests
+figment = { workspace = true }
+# Captures warn logs in tests (provisioning drift, provider failure causes)
+tracing-test = { workspace = true }

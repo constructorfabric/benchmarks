@@ -126,6 +126,16 @@ gears:
       # must match static-credstore-plugin (default "constructorfabric").
       vendor: "constructorfabric"
 
+  # The credstore gateway reads a secret's metadata from its own DB, so the
+  # value below is not readable on its own (issue #5094): until that is fixed,
+  # OAGW reports `azure-openai-key` as not accessible and mini-chat logs
+  # "OAGW provisioning deferred" and retries the provider in the background.
+  # Set the secret through the credstore API after every start (the first run
+  # needs POST instead of PUT); mini-chat then provisions the provider:
+  #   read -s -p 'azure key: ' KEY && printf '{"value":"%s","sharing":"tenant"}' "$KEY" \
+  #     | curl -X PUT http://localhost:8087/cf/credstore/v1/secrets/azure-openai-key \
+  #         -H 'Authorization: Bearer dev' -H 'content-type: application/json' \
+  #         -H 'If-Match: *' -d @-
   static-credstore-plugin:
     config:
       secrets:
