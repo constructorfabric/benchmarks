@@ -8,8 +8,8 @@ use crate::secure::{Scoped, SecureSelect};
 use bigdecimal::ToPrimitive;
 use chrono::SecondsFormat;
 use sea_orm::{
-    Condition, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect,
-    sea_query::{Expr, LikeExpr, Order},
+    Condition, EntityTrait, ExprTrait, IntoSimpleExpr, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, LikeExpr, Order, SimpleExpr},
 };
 use toolkit_odata::filter::{
     FieldKind, FilterField, FilterNode, FilterOp, ODataValue, convert_expr_to_filter_node,
@@ -85,6 +85,35 @@ pub trait FieldToColumn<F: FilterField> {
     /// category.
     fn map_value(_field: F, _op: FilterOp, value: &ODataValue) -> Result<ODataValue, String> {
         Ok(value.clone())
+    }
+
+    /// Optional per-field override of the SQL value a filter literal is bound
+    /// as. Default `None`: the literal is bound with the platform conversion
+    /// (a `$filter` date-time literal becomes a `chrono` value).
+    ///
+    /// Implementors override this when the entity column is not stored with
+    /// the platform's default Rust type, e.g. a `time::OffsetDateTime` column:
+    /// on `SQLite` the text a `chrono` value is bound as differs from the text
+    /// a `time` value is stored as, so equality and range comparisons would
+    /// not agree with the stored rows. Return the value of the column's own
+    /// type (the one [`ODataFieldMapping::extract_cursor_value`] returns for
+    /// cursors). The hook sees the value AFTER [`Self::map_value`] and applies
+    /// to binary comparisons and `in` lists.
+    fn bind_value(_field: F, _value: &ODataValue) -> Option<sea_orm::Value> {
+        None
+    }
+
+    /// The SQL expression `$orderby` and the keyset cursor predicate use for
+    /// `field`. Default: the mapped column itself.
+    ///
+    /// Override to give a nullable column a total order that is the same on
+    /// every engine, e.g. `COALESCE(title, '')` (`NULL` ordering differs
+    /// between `SQLite` and `PostgreSQL`, and a keyset comparison skips `NULL`
+    /// rows). The override must agree with
+    /// [`ODataFieldMapping::extract_cursor_value`]: the cursor carries the
+    /// value of THIS expression for the last row of a page.
+    fn sort_expr(field: F) -> SimpleExpr {
+        Self::map_field(field).into_simple_expr()
     }
 
     /// Whether `field` is admissible in `$orderby` (and therefore as
@@ -231,7 +260,8 @@ where
             // operator, so existing call sites are unaffected.
             let column = M::map_field(*field);
             let mapped = M::map_value(*field, *op, value)?;
-            build_binary_condition(column, *op, &mapped)
+            let bound = M::bind_value(*field, &mapped);
+            build_binary_condition(column, *op, &mapped, bound)
         }
         FilterNode::InList { field, values } => {
             if values.is_empty() {
@@ -243,7 +273,10 @@ where
                 .iter()
                 .map(|v| {
                     let mapped = M::map_value(*field, FilterOp::In, v)?;
-                    odata_value_to_sea_value_for_kind(&mapped, kind)
+                    match M::bind_value(*field, &mapped) {
+                        Some(bound) => Ok(bound),
+                        None => odata_value_to_sea_value_for_kind(&mapped, kind),
+                    }
                 })
                 .collect::<Result<_, _>>()?;
             Ok(Condition::all().add(Expr::col(column).is_in(sea_values)))
@@ -276,6 +309,7 @@ fn build_binary_condition<C>(
     column: C,
     op: FilterOp,
     value: &ODataValue,
+    bound: Option<sea_orm::Value>,
 ) -> Result<Condition, String>
 where
     C: sea_orm::Iden + sea_orm::ColumnTrait + sea_orm::IntoSimpleExpr + Clone + 'static,
@@ -290,8 +324,11 @@ where
         });
     }
 
-    // Convert ODataValue to sea_orm::Value
-    let sea_value = odata_value_to_sea_value(value)?;
+    // The mapper's own bind value wins over the platform conversion
+    let sea_value = match bound {
+        Some(bound) => bound,
+        None => odata_value_to_sea_value(value)?,
+    };
 
     // Build the expression based on the operator
     let expr = match op {
@@ -757,12 +794,11 @@ where
     for order_key in &query_order.0 {
         let field = F::from_name(&order_key.field)
             .ok_or_else(|| ODataError::InvalidOrderByField(order_key.field.clone()))?;
-        let column = M::map_field(field);
         let sea_order = match order_key.dir {
             SortDir::Asc => Order::Asc,
             SortDir::Desc => Order::Desc,
         };
-        s = s.order_by(column, sea_order);
+        s = s.order_by(M::sort_expr(field), sea_order);
     }
 
     s = s.limit(fetch);
@@ -869,18 +905,18 @@ where
     }
 
     // Parse all cursor values first
-    let mut cursor_values: Vec<(F, M::Column, sea_orm::Value, SortDir)> = Vec::new();
+    let mut cursor_values: Vec<(SimpleExpr, sea_orm::Value, SortDir)> = Vec::new();
     for (i, key_str) in cursor.k.iter().enumerate() {
         let order_key = &order.0[i];
         let field = F::from_name(&order_key.field)
             .ok_or(ODataError::InvalidOrderByField(order_key.field.clone()))?;
-        let column = M::map_field(field);
+        let expr = M::sort_expr(field);
         // Cursor tokens carry the storage-shaped value the mapper
         // extracted, so decode with the mapper's cursor kind (which may
         // differ from the wire filter kind — see `cursor_kind`).
         let kind = M::cursor_kind(field);
         let value = parse_cursor_value(kind, key_str).map_err(|_| ODataError::InvalidCursor)?;
-        cursor_values.push((field, column, value, order_key.dir));
+        cursor_values.push((expr, value, order_key.dir));
     }
 
     let is_backward = cursor.d == "bwd";
@@ -890,23 +926,23 @@ where
         let mut prefix_condition = Condition::all();
 
         // Add equality conditions for all previous fields
-        for (_field, column, value, _dir) in cursor_values.iter().take(i) {
-            prefix_condition = prefix_condition.add(Expr::col(*column).eq(value.clone()));
+        for (expr, value, _dir) in cursor_values.iter().take(i) {
+            prefix_condition = prefix_condition.add(expr.clone().eq(value.clone()));
         }
 
         // Add comparison for current field
-        let (_field, column, value, dir) = &cursor_values[i];
+        let (expr, value, dir) = &cursor_values[i];
         let comparison = if is_backward {
             // Backward: reverse the comparison
             match dir {
-                SortDir::Asc => Expr::col(*column).lt(value.clone()),
-                SortDir::Desc => Expr::col(*column).gt(value.clone()),
+                SortDir::Asc => expr.clone().lt(value.clone()),
+                SortDir::Desc => expr.clone().gt(value.clone()),
             }
         } else {
             // Forward: normal comparison
             match dir {
-                SortDir::Asc => Expr::col(*column).gt(value.clone()),
-                SortDir::Desc => Expr::col(*column).lt(value.clone()),
+                SortDir::Asc => expr.clone().gt(value.clone()),
+                SortDir::Desc => expr.clone().lt(value.clone()),
             }
         };
 
@@ -984,3 +1020,7 @@ mod cursor_codec_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "sea_orm_filter_hooks_tests.rs"]
+mod hooks_tests;
