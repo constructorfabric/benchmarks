@@ -1,0 +1,48 @@
+# Review findings left open (REVIEW-FIX LIMIT)
+
+- cf-gears-coding | S1-foundation | F-001 | MAJOR | not a blocker: DbError->DomainError conversion drops the driver cause without logging (observability only; wire contract unaffected)
+- cf-gears-coding | S1-foundation | F-002 | MAJOR | not a blocker: PostgreSQL migration variants are not executed by tests (no PG container offline); SQLite path is tested and is the runtime target here
+- cf-gears-coding | S1-foundation | F-003 | MAJOR | not a blocker: SDK ModelCatalogEntry defaults provider_display_name/max_input_tokens/max_num_results/general_config that DESIGN B.2 lists as required (lenient parsing; no acceptance scenario affected)
+- cf-gears-coding | S1-foundation | F-004 | MINOR | majors open: invalid url_prefix (no leading '/') panics at REST registration instead of failing validation
+- cf-gears-coding | S1-foundation | F-005 | MINOR | majors open: unique-violation detection parses English driver text instead of SQLSTATE 23505
+- cf-gears-coding | S1-foundation | F-006 | MINOR | majors open: startup-failure e2e tests assert only the exit code, not the validation message
+- cf-gears-coding | S1-foundation | F-007 | MINOR | majors open: stale "(planned)" module docs in lib.rs and SDK doc example instance segment
+- cf-gears-coding | S1-foundation | F-008 | MINOR | majors open: AuthZResolverApi resolved lazily (PolicyEnforcer::from_hub) instead of in init per DESIGN 3.2
+- cf-gears-coding | S1-foundation | F-009 | MINOR | majors open: license-gate requirement on routes has no regression test
+- cf-gears-coding | S1-foundation | F-010 | MINOR | majors open: no review-evidence record for touched security guardrails (PEP, Secure ORM, secrets, plugin selection)
+- cf-gears-coding | S1-foundation | F-011 | MINOR | majors open: docs/api/api.json lacks the operation descriptions set in routes.rs (documentation only)
+- cf-gears-coding | S3-streaming | F-002 | MAJOR | not a blocker: the finalization_failed terminal path has no fault-injection test (behaviour implemented per DESIGN 5.7)
+- cf-gears-coding | S3-streaming | F-003 | MAJOR | not a blocker: DESIGN "Emitted" OTel metrics (stream/quota/cancel counters) are not recorded; observability only
+- cf-gears-coding | S3-streaming | F-005 | MINOR | majors open: re-read after a unique violation propagates a DB error as 500 instead of the original 409 reason
+- cf-gears-coding | S3-streaming | F-006 | MINOR | majors open: StreamService::send exceeds the ~200 LOC soft complexity bound
+- cf-gears-coding | S3-streaming | F-007 | MINOR | majors open: out-of-range stored summary token_estimate maps to 0 instead of saturating
+- cf-gears-coding | S3-streaming | F-008 | MINOR | majors open: S2S context mutex held across the credential exchange, no negative-cache backoff
+- cf-gears-coding | S3-streaming | F-009 | MINOR | majors open: agentic_iterations_exceeded / unexpected_tool_use codes belong to the knowledge-search loop (later slice)
+- cf-gears-coding | S3-streaming | F-010 | MINOR | majors open: docs/api/api.json not regenerated for new route descriptions (documentation only)
+- cf-gears-coding | S3-streaming | F-011 | MINOR | documentation note: send path now produces DESIGN 5.8/5.9 case (B) (adapter failure before the outbound call -> released settlement, error_code turn_setup_failed); DESIGN text says case (B) does not occur in P1
+- cf-gears-coding | S4-turn-mutations | F-G1 | MINOR | not fixable in code: DESIGN 3.9 rule 8 lists two post-commit setup error codes while 3.6 lists three (incl. quota_exceeded); code follows 3.6; supplied documents must not be edited
+- cf-gears-coding | S4-turn-mutations | F-G2 | MINOR | not fixable in code: mutation audit payload also carries tenant_id (outbox partition key) which the 3.9 required-field table does not list; additive
+- cf-gears-coding | S4-turn-mutations | F-G3 | MINOR | design silent: edit EMPTY_CONTENT is validated before PDP/lookups (400 wins over 403/404); kept as implemented
+- cf-gears-coding | S5-attachments | F-002 | MAJOR | not a blocker: per-chat document/storage limit check is insert-then-count without a chat lock; concurrent uploads on PostgreSQL READ COMMITTED can exceed the limit (SQLite serialized)
+- cf-gears-coding | S5-attachments | F-003 | MAJOR | not a blocker in S5: upload reaper (upload_abandoned) is scheduled for slice S6-background
+- cf-gears-coding | S5-attachments | F-004 | MAJOR | not a blocker in S5: Anthropic secondary image copy is scheduled for slice S6 with the anthropic_messages adapter
+- cf-gears-coding | S5-attachments | F-005 | MINOR | majors open: mark_uploaded lacks the unclaimed (cleanup_status IS NULL) guard; upload racing chat deletion may attach a provider file after chat cleanup
+- cf-gears-coding | S5-attachments | F-006 | MINOR | majors open: vector-store CAS DB error leaks the new provider store and leaves the placeholder until stale reclaim
+- cf-gears-coding | S5-attachments | F-007 | MINOR | majors open: mark_ready DB error leaves the row uploaded (500) until the reaper
+- cf-gears-coding | S5-attachments | F-008 | MINOR | majors open: thumbnail resize f32 intermediate is not bounded by max_decode_bytes for extreme aspect ratios
+- cf-gears-coding | S5-attachments | F-009 | MINOR | majors open: upload body is buffered up to the per-file cap instead of streamed to the provider (needed for the insert-time size check)
+- cf-gears-coding | S5-attachments | F-010 | MINOR | majors open: cleanup counters (completed/failed/retry) not recorded; test gaps (lost CAS branch, decoder cap)
+- cf-gears-coding | S5-attachments | F-011 | MINOR | majors open: docs/api/api.json AttachmentDetailDto description stale; DESIGN error_code list includes values (file_too_large, storage_limit_exceeded) no path produces
+- cf-gears-coding | S6-background | F-006 | MINOR | design/perf: orphan settlement still calls the policy plugin inside the finalization transaction (static in-process plugin today; remote plugin would hold the write lock longer)
+- cf-gears-coding | S6-background | F-008 | MINOR | design silent: skipped-settlement orphan usage/audit events carry the chat owner (or nil) as user_id when requester_user_id is NULL; DESIGN 5577 does not name the value
+- cf-gears-coding | S6-background | F-009 | MINOR | design wording: whitespace-only thread_summary_prompt / summary_system_prompt is treated as empty
+- cf-gears-coding | S6-background | F-R1 | MINOR | residual: send-path (started_at,id) ordering race widened slightly by using the preflight instant as started_at (requires another turn to commit and fail within milliseconds)
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-003 | MINOR | citation spans not offset across knowledge-loop iterations; not a blocker, closed after a review with no blocker
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-004 | MINOR | shared transport/error helpers live in openai_responses module (maintainability); not a blocker
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-005 | MINOR | duplicated event_name / sampling-parameter helpers (DRY); not a blocker
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-006 | MINOR | provider non-2xx responses logged at debug only; not a blocker
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-007 | MINOR | read_limited silently truncates/drops body read errors; not a blocker
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-008 | MINOR | conditional top_k assertion in test_s7_knowledge_search.py; not a blocker
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-B04 | MINOR | sanitizer lacks toolu_/call_/fc_ provider id prefixes and Chat Completions tool details carry call_id; not a blocker
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-B05 | MINOR | SSE line buffer unbounded per turn (bounded by cancellation/OAGW); not a blocker
+- cf-gears-coding | gears/mini-chat/docs/DESIGN.md S7-adapters | F-R01 | MINOR | attachments.secondary_provider_id (added for F-001) not listed in DESIGN §3.7; supplied documents must not be edited in this run
