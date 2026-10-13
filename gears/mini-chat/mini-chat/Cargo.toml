@@ -31,6 +31,9 @@ authz-resolver-sdk = { workspace = true }
 # OAGW SDK — proxy calls, SSE stream, gateway errors
 oagw-sdk = { workspace = true }
 
+# Mini-chat SDK — public models and plugin contracts
+mini-chat-sdk = { workspace = true }
+
 # Types registry for plugin discovery
 types-registry-sdk = { workspace = true }
 types-registry = { workspace = true }
@@ -105,8 +108,12 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
+types-registry-sdk = { workspace = true, features = ["test-util"] }
 chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
+serde-saphyr = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+tower = { workspace = true, features = ["util"] }
 
 

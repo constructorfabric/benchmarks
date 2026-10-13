@@ -1052,3 +1052,88 @@ fn odata_navigation_path_empty_segment_rejected() {
 fn odata_navigation_path_double_slash_rejected() {
     parse_str("hierarchy//depth eq 1").expect_err("double slash should be rejected");
 }
+
+/// Runs `f` on a thread with a 2 MiB stack (a tokio worker) and returns its
+/// result with the elapsed time.
+fn on_small_stack<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> (T, std::time::Duration) {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            let out = f();
+            (out, started.elapsed())
+        })
+        .expect("spawn")
+        .join()
+        .expect("no stack overflow")
+}
+
+#[test]
+fn failing_nested_not_parse_is_linear_not_exponential() {
+    for n in [20_usize, 32, 64] {
+        let input = format!("{}1 eq{}", "not(".repeat(n), ")".repeat(n));
+        let (result, elapsed) = on_small_stack(move || parse_str(&input).is_err());
+
+        assert!(result, "n={n} must be rejected");
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "n={n} took {elapsed:?}"
+        );
+    }
+}
+
+#[test]
+fn a_valid_nested_not_still_parses() {
+    let n = 8;
+    let input = format!("{}a eq 1{}", "not(".repeat(n), ")".repeat(n));
+
+    let mut expr = parse_str(&input).expect("valid nested not");
+    for _ in 0..n {
+        let Expr::Not(inner) = expr else {
+            panic!("expected Not");
+        };
+        expr = *inner;
+    }
+    assert!(matches!(expr, Expr::Compare(..)));
+}
+
+#[test]
+fn identifiers_that_merely_contain_not_are_still_function_names() {
+    let result = parse_str("knot(a) eq 1").expect("function named knot");
+
+    let Expr::Compare(left, Equal, _) = result else {
+        panic!("expected comparison");
+    };
+    assert!(matches!(*left, Expr::Function(ref name, _) if name == "knot"));
+}
+
+#[test]
+fn not_is_reserved_and_never_a_function_name() {
+    assert!(parse_str("not(a eq 1)").is_ok());
+    assert!(matches!(parse_str("not(a eq 1)"), Ok(Expr::Not(_))));
+    parse_str("not(1,2) eq 3").expect_err("`not` is not a function");
+}
+
+#[test]
+fn other_failing_nestings_are_fast_too() {
+    let n = 32;
+    let inputs = [
+        format!("{}1 eq{}", "(".repeat(n), ")".repeat(n)),
+        format!("{}1 eq{}", "f(".repeat(n), ")".repeat(n)),
+        format!("{}1 eq{}", "not (not ".repeat(n), ")".repeat(n)),
+        format!("{}1 eq{}", "not(f(".repeat(n), "))".repeat(n)),
+        format!("{}x eq", "not ".repeat(n)),
+    ];
+    for input in inputs {
+        let shown = input.clone();
+        let (result, elapsed) = on_small_stack(move || parse_str(&input).is_err());
+
+        assert!(result, "{shown}");
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "{shown} took {elapsed:?}"
+        );
+    }
+}

@@ -91,8 +91,16 @@ peg::parser! {
             / "le" { CompareOperator::LessOrEqual }
 
         /// Parses a function call with a name and arguments.
+        ///
+        /// `not` is a reserved word, never a function name: `unary_expr` already
+        /// owns `not (`. Without this lookahead a failing `not(not(...` input
+        /// is re-parsed as a function call at every level, which costs 2^n.
         rule function_call() -> Result<Expr, ParseError>
-            = f:identifier() _ "(" _ l:filter_list() _ ")" { Ok(Expr::Function(f, l?)) }
+            = !reserved_not() f:identifier() _ "(" _ l:filter_list() _ ")" { Ok(Expr::Function(f, l?)) }
+
+        /// The whole identifier `not` (not a longer identifier such as `nothing`).
+        rule reserved_not()
+            = "not" !['a'..='z'|'A'..='Z'|'_'|'0'..='9']
 
         /// Parses an OData property path (e.g., `hierarchy/depth`, `address/city`).
         /// OData 4.01 ABNF §5.1.1.15 — property paths use `/` as segment separator:
