@@ -50,6 +50,7 @@ inventory = { workspace = true }
 tokio-retry = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
+async-stream = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
 multer = "3.1"
@@ -59,6 +60,8 @@ base64 = { workspace = true }
 
 # Image processing (thumbnail generation)
 image = { workspace = true }
+
+chrono = { workspace = true }
 
 # Serde and JSON
 serde = { workspace = true }
@@ -86,6 +89,7 @@ thiserror = { workspace = true }
 opentelemetry = { workspace = true }
 
 # Local dependencies
+mini-chat-sdk = { workspace = true }
 toolkit = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
@@ -105,7 +109,10 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
+oagw = { workspace = true, features = ["test-utils"] }
+tower = { workspace = true }
+types-registry-sdk = { workspace = true, features = ["test-util"] }
+tempfile = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
 

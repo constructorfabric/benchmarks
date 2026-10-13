@@ -4,7 +4,7 @@
 # Based on quickstart.yaml but stripped to essentials.
 #
 # Usage:
-#   cargo run --bin cf-gears-server --features mini-chat,static-authn,static-authz,single-tenant,static-credstore -- --config config/mini-chat.yaml run
+#   cargo run --bin cf-gears-example-server --no-default-features --features mini-chat,static-authn,static-authz,single-tenant,static-credstore -- --config config/mini-chat.yaml run
 
 server:
   home_dir: "~/.cf-gears"
