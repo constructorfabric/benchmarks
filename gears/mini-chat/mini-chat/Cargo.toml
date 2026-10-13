@@ -68,12 +68,14 @@ utoipa = { workspace = true, features = ["time"] }
 # HTTP and REST
 axum = { workspace = true, features = ["macros", "multipart"] }
 http = { workspace = true }
+tower = { workspace = true }
+parking_lot = { workspace = true }
 
 # Time handling
 time = { workspace = true }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }
@@ -86,6 +88,7 @@ thiserror = { workspace = true }
 opentelemetry = { workspace = true }
 
 # Local dependencies
+mini-chat-sdk = { workspace = true }
 toolkit = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
 toolkit-gts = { workspace = true }
@@ -108,5 +111,6 @@ k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
+serde-saphyr = { workspace = true }
 
 
