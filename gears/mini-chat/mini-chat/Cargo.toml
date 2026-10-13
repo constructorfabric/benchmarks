@@ -25,6 +25,9 @@ k8s = ["dep:kube", "dep:k8s-openapi"]
 # AuthN resolver for S2S client credentials exchange
 authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37", path = "../../system/authn-resolver/authn-resolver-sdk" }
 
+# Mini Chat SDK (plugin contracts and shared models)
+mini-chat-sdk = { workspace = true }
+
 # AuthZ resolver for authorization (PEP flow)
 authz-resolver-sdk = { workspace = true }
 
@@ -73,7 +76,7 @@ http = { workspace = true }
 time = { workspace = true }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }
@@ -108,5 +111,7 @@ k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+http-body-util = { workspace = true }
 
 
