@@ -1,0 +1,89 @@
+# Review findings deferred at close
+
+- cf-gears-coding | S1 foundation-crud | F-003 | MAJOR | Not a blocker (performance): chat list computes message_count with one COUNT query per chat (N+1, up to 101 queries for limit=100).
+- cf-gears-coding | S1 foundation-crud | F-004 | MAJOR | Not a blocker (test gap): soft-delete + chat-cleanup outbox atomicity is asserted through the in-memory enqueue observer, not the durable outbox rows; no rollback-path test.
+- cf-gears-coding | S1 foundation-crud | F-005 | MINOR | POST /v1/chats does not declare error_422 in OpenAPI although the endpoint returns it.
+- cf-gears-coding | S1 foundation-crud | F-006 | MINOR | TurnAuditEvent lacks the always-empty attachments/license/quota_scope fields described by ADR-0009.
+- cf-gears-coding | S1 foundation-crud | F-007 | MINOR | services.rs doc comment claims an audit outbox handler that is not registered yet.
+- cf-gears-coding | S1 foundation-crud | F-008 | MINOR | Audit gateway logs the "no audit plugin" warning per event instead of once per period.
+- cf-gears-coding | S1 foundation-crud | F-009 | MINOR | Process wording ("slice") in code comments; chat-cleanup dead-letter reason text differs from DESIGN wording.
+- cf-gears-coding | S1 foundation-crud | F-010 | MINOR | Migration adds CHECKs on messages.role and quota_usage.period_type beyond the DESIGN-listed set.
+- cf-gears-coding | S1 foundation-crud | F-011 | MINOR | Static model-policy plugin rejects duplicate/empty ids and bytes_per_token_conservative = 0 beyond B.1.
+- cf-gears-coding | S1 foundation-crud | F-012 | MINOR | GTS instance-id format doc in SDK gts.rs shows four tokens instead of five.
+- cf-gears-coding | S1 foundation-crud | F-013 | MINOR | message_count only asserted as 0 in tests; no PostgreSQL-backed migration/CRUD test.
+- cf-gears-coding | S1 foundation-crud | F-014 | MINOR | url_prefix validation (leading `/`, no trailing `/`) stricter than Appendix B.1.
+- cf-gears-coding | S1 foundation-crud | F-015 | MINOR | PDP denials logged at debug without action/resource context.
+- cf-gears-coding | S1 foundation-crud | F-016 | MINOR | CLEANUP_PENDING constant duplicated in chat_repo.rs and chat_cleanup.rs.
+- cf-gears-coding | S1 foundation-crud | F-017 | MINOR | test_support harness compiled into the production library (not feature-gated).
+- cf-gears-coding | S1 foundation-crud | F-018 | MINOR | Static plugin deep-clones the policy snapshot per request.
+- cf-gears-coding | S1 foundation-crud | F-019 | MINOR | panic! on invalid compile-time outbox table prefix (unreachable).
+- cf-gears-coding | S1 foundation-crud | F-020 | MINOR | create-chat route references gateway throttling zones not named in DESIGN.
+- cf-gears-coding | S1 foundation-crud | F-021 | MINOR | Outbox queue names only checked for non-emptiness; no charset/uniqueness validation.
+- cf-gears-coding | S1 foundation-crud | F-022 | MINOR | tenant_overrides keys accept non-hyphenated UUID forms that later lookups will not match.
+- cf-gears-coding | S1 foundation-crud | F-023 | MINOR | Model-policy gateway does not reset the cached plugin selection when the selected instance has no ClientHub client.
+- cf-gears-coding | S1 foundation-crud | F-024 | MINOR | Generic PostgreSQL coverage gap for OData/cursor semantics (NULL ordering, binding).
+- cf-gears-coding | S2 send-pipeline | G-003 | MAJOR | Not a blocker: TurnAuditEvent carries no OpenTelemetry trace_id (DESIGN 3857 observability field).
+- cf-gears-coding | S2 send-pipeline | G-004 | MAJOR | Not a blocker (test gap): no integration test of the CAS-loser path / stream_interrupted synthesis.
+- cf-gears-coding | S2 send-pipeline | G-005 | MINOR | mini_chat_time_to_abort_ms measured through finalization instead of until the read loop exits.
+- cf-gears-coding | S2 send-pipeline | G-006 | MINOR | cancel_requested also counted for disconnects detected by a failed channel send.
+- cf-gears-coding | S2 send-pipeline | G-007 | MINOR | mini_chat_ttft_overhead_ms histogram not recorded.
+- cf-gears-coding | S2 send-pipeline | G-008 | MINOR | Anthropic adapter forwards max_tool_calls as web_search max_uses (DESIGN: only OpenAI Responses sends it).
+- cf-gears-coding | S2 send-pipeline | G-009 | MINOR | Quota preflight read is a plain SELECT (no tx / FOR UPDATE); correctness kept by the reserve re-check.
+- cf-gears-coding | S2 send-pipeline | G-010 | MINOR | Attachment and disable_images guards run before the quota cascade (DESIGN orders image guards after preflight).
+- cf-gears-coding | S2 send-pipeline | G-011 | MINOR | Web citation snippet ignores an annotation-provided text when no range is present.
+- cf-gears-coding | S2 send-pipeline | G-012 | MINOR | Provider error body fully buffered before the 64 KiB cap is applied.
+- cf-gears-coding | S2 send-pipeline | G-013 | MINOR | Reaction upsert is update-then-insert; concurrent first PUTs can yield 409.
+- cf-gears-coding | S2 send-pipeline | G-014 | MINOR | provider_timeout (gateway timeout / gateway 504) not covered by integration tests.
+- cf-gears-coding | S2 send-pipeline | G-015 | MINOR | Ping ordering integration test is vacuous (fake provider never idles).
+- cf-gears-coding | S2 send-pipeline | G-016 | MINOR | Overshoot cap and PostgreSQL reserve concurrency only unit-tested.
+- cf-gears-coding | S2 send-pipeline | G-017 | MINOR | Unknown error code logged at warn (DESIGN: critical); incomplete reason not logged.
+- cf-gears-coding | S2 send-pipeline | G-018 | MINOR | Outbox payload-size error text is cleanup-specific for usage/audit queues.
+- cf-gears-coding | S2 send-pipeline | G-019 | MINOR | gear stop awaits the OAGW reconcile task without racing the stop deadline; reconcile task not cancelled when start fails later.
+- cf-gears-coding | S2 send-pipeline | G-020 | MINOR | Any completed-finalize tx error is treated as message_persistence_failed (no transient retry on the completed path).
+- cf-gears-coding | S2 send-pipeline | R2-003 | MINOR | upstream_alias for hostname hosts is ignored (OAGW derives hostname aliases), deviating from DESIGN B.1 wording.
+- cf-gears-coding | S2 send-pipeline | R2-004 | MINOR | No integration test for gear stop draining provider tasks before the outbox stops.
+- cf-gears-coding | S2 send-pipeline | R2-005 | MINOR | A panic inside conclude/finalize is not supervised (relay panics are).
+- cf-gears-coding | S2 send-pipeline | R3-001 | MINOR | Authless provider upstreams are not visible to descendant tenants under OAGW semantics (single-tenant setups unaffected).
+- cf-gears-coding | S2 send-pipeline | R3-002 | MINOR | IP-host alias defaults to ip:port on non-standard ports, deviating from the DESIGN "defaults to host" wording.
+- cf-gears-coding | S3 billing-ops | H-002 | MAJOR | Not a blocker (test gap): no test of the last_progress_at refresh nor of the renewed-progress re-check inside the orphan CAS.
+- cf-gears-coding | S3 billing-ops | H-003 | MINOR | A panic inside an orphan scan ends the watchdog worker task (no catch_unwind/restart).
+- cf-gears-coding | S3 billing-ops | H-004 | MINOR | Watchdog/elector joins at stop are not raced against the stop deadline; cancellation not checked between candidates; elector prepared after OAGW provisioning.
+- cf-gears-coding | S3 billing-ops | H-005 | MINOR | Leadership is checked once per scan, not before each candidate.
+- cf-gears-coding | S3 billing-ops | H-006 | MINOR | Outbox enqueuer carries test fault-injection hooks in the production type.
+- cf-gears-coding | S3 billing-ops | H-007 | MINOR | Kubernetes Lease elector has no unit tests; renew validity margin about 2 s.
+- cf-gears-coding | S3 billing-ops | H-008 | MINOR | ADR-0008 wording about settlement-time snapshot fetch does not match the code paths.
+- cf-gears-coding | S3 billing-ops | H-009 | MINOR | file_search gate/surcharge true when a ready for_file_search attachment exists but the chat has no vector store id.
+- cf-gears-coding | S3 billing-ops | H-010 | MINOR | remaining_percentage saturates for limits above i64::MAX/100.
+- cf-gears-coding | S3 billing-ops | S3R2-003 | MINOR | Deterministic transaction failures (missing quota row) retried every scan in the orphan path.
+- cf-gears-coding | S3 billing-ops | S3R2-004 | MINOR | Audit event carries the nil UUID as user for a turn without requester.
+- cf-gears-coding | S3 billing-ops | S3R3-001 | MINOR | FinalizeCommand.premium doc comment describes the removed conditional premium release.
+- cf-gears-coding | S3 billing-ops | S3R3-002 | MINOR | Transient-retry bound measured from last_progress_at, so after a long outage orphans finalize released on the first failed attempt.
+- cf-gears-coding | S3 billing-ops | S3R3-003 | MINOR | Orphan fallbacks (released settlement on unresolvable basis, total-only release for unknown tier, orphan clamp, retry window) are not described in DESIGN.
+- cf-gears-coding | S4 mutations-summary | I-003 | MAJOR | Not a blocker: summary handler's self-minted system SecurityContext (DESIGN 3681 system identity, `*` scopes for the OAGW call only) had no recorded review evidence; evidence recorded in the S4 close report.
+- cf-gears-coding | S4 mutations-summary | I-004 | MAJOR | Not a blocker (test gap): thread_summary_trigger and turn_mutation metrics are not asserted by tests.
+- cf-gears-coding | S4 mutations-summary | I-005 | MINOR | stream_started.thread_summary_applied reports the context-plan estimate (preamble + text) rather than the stored thread_summaries.token_estimate.
+- cf-gears-coding | S4 mutations-summary | I-006 | MINOR | Concurrency/lock interleavings for mutations, sends and summary commits are only tested on SQLite.
+- cf-gears-coding | S4 mutations-summary | I-007 | MINOR | turn_mutation metric doc lists `setup_failed`, which is never emitted; post-commit setup failures labelled `rejected`.
+- cf-gears-coding | S4 mutations-summary | I-008 | MINOR | replacement_audit maps an impossible Delete op to a turn_retry event instead of rejecting it.
+- cf-gears-coding | S4 mutations-summary | I-009 | MINOR | Summary prompt-too-large retry is decided by message substring regardless of error kind.
+- cf-gears-coding | S4 mutations-summary | I-010 | MINOR | Gear start runs the outbox (thread-summary delivery) before OAGW provisioning, unlike the DESIGN 604 order.
+- cf-gears-coding | S4 mutations-summary | I-011 | MINOR | PreparedMutation::content() is unused.
+- cf-gears-coding | S4 mutations-summary | I-012 | MINOR | Same-turn concurrent mutations lose with NOT_LATEST_TURN rather than GENERATION_IN_PROGRESS (DESIGN rule 7 wording).
+- cf-gears-coding | S4 mutations-summary | S4R2-001 | MINOR | Reserve fill writes last_progress_at with the preflight instant, so the progress refresh is a no-op (safety comes from the reserve-null CAS guard).
+- cf-gears-coding | S4 mutations-summary | S4R2-002 | MINOR | Orphan CAS checks only reserve_tokens IS NULL while candidate detection requires all six reserve columns.
+- cf-gears-coding | S4 mutations-summary | S4R2-003 | MINOR | Missing tests: NULL requester with reserve, reserve after orphan finalize, chat deleted between pre-check and lock.
+- cf-gears-coding | S4 mutations-summary | S4R2-004 | MINOR | fail_unstarted leaves a turn with a filled reserve to the watchdog, a behaviour not described in DESIGN 3.9 rule 8 / 5.7.
+- cf-gears-coding | S5 attachments | J-004 | MAJOR | Not a blocker: upload route no longer declares the multipart/form-data request body in OpenAPI (kept to return 400 BOUNDARY_REQUIRED instead of a gateway 415).
+- cf-gears-coding | S5 attachments | J-005 | MAJOR | Not a blocker (test gap): ready-write retry/set_ready_failed path and S5 metrics (upload, cleanup, reaper, background indexing) are not asserted.
+- cf-gears-coding | S5 attachments | J-006 | MINOR | Upload 503 detail text differs from the DESIGN generic "Service temporarily unavailable".
+- cf-gears-coding | S5 attachments | J-007 | MINOR | Upload body is buffered in memory up to the size limit (DESIGN wording says streaming / not kept in memory for large images).
+- cf-gears-coding | S5 attachments | J-008 | MINOR | Background indexing status reads bounded by the task end, not the round; no compile-time heartbeat vs stale_after assertion.
+- cf-gears-coding | S5 attachments | J-009 | MINOR | Provider-delete helpers duplicated between attachment and chat cleanup handlers.
+- cf-gears-coding | S5 attachments | J-010 | MINOR | attachment_indexing_failed payload deleted_at set at spawn time rather than enqueue time.
+- cf-gears-coding | S5 attachments | J-011 | MINOR | AttachmentDetail DTO uses free strings for status/kind and optional content_type/size_bytes; 201 declares an extra Location header.
+- cf-gears-coding | S5 attachments | J-012 | MINOR | Thumbnail input bytes copied byte-by-byte without capacity hint.
+- cf-gears-coding | S5 attachments | J-013 | MINOR | storage_backend label not length-validated against VARCHAR(32); provider id segment allows 256 chars vs VARCHAR(128) columns.
+- cf-gears-coding | S5 attachments | S5R2-001 | MINOR | Chat cleanup deletes a NULL vector-store placeholder unconditionally; a creator committing the store id in between could orphan the provider store.
+- cf-gears-coding | S5 attachments | S5R2-002 | MINOR | Best-effort deletes of orphan provider/secondary files are not retried.
+- cf-gears-coding | S5 attachments | S5R2-003 | MINOR | No tests for lost-row orphan file deletion, in-flight claim by chat cleanup, or cross-provider image downgrade.
+- cf-gears-coding | S5 attachments | S5R2-004 | MINOR | Anthropic beta header is static (Files beta only); code_execution beta not combined.
