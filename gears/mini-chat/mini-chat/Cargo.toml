@@ -73,7 +73,7 @@ http = { workspace = true }
 time = { workspace = true }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }
@@ -84,6 +84,12 @@ thiserror = { workspace = true }
 
 # Metrics / OpenTelemetry
 opentelemetry = { workspace = true }
+
+# SDK
+mini-chat-sdk = { workspace = true }
+schemars = { workspace = true }
+toolkit-utils = { workspace = true }
+toolkit-odata = { workspace = true, features = ["with-utoipa"] }
 
 # Local dependencies
 toolkit = { workspace = true }
@@ -97,14 +103,17 @@ toolkit-db = { workspace = true, features = ["sqlite", "pg"] }
 toolkit-db-macros = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
-toolkit-odata = { workspace = true, features = ["with-utoipa"] }
 heck = { workspace = true }
+chrono = { workspace = true }
 secrecy = { workspace = true }
 # k8s leader election (optional, behind k8s feature)
 kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], optional = true }
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
+tower = { workspace = true }
+tempfile = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite"] }
 chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
