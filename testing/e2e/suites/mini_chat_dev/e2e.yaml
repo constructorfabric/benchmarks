@@ -1,0 +1,12 @@
+# Self-managed black-box suite for the mini-chat gear: its conftest.py starts
+# its own server (temp home_dir, unique ports) against an in-process mock LLM.
+# Excluded from shared `make e2e-local` runs (launcher: pytest) and skipped
+# when collected as part of a whole-tree `pytest testing/e2e` run.
+suite: mini-chat-dev
+features:
+  - mini-chat
+  - static-authn
+  - static-authz
+  - single-tenant
+  - static-credstore
+launcher: pytest

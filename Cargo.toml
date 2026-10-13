@@ -97,6 +97,7 @@ members = [
     "gears/system/authz-resolver/plugins/static-authz-plugin",
     "gears/system/oagw/oagw",
     "gears/system/oagw/oagw-sdk",
+    "gears/mini-chat/mini-chat-sdk",
     "gears/mini-chat/mini-chat",
     "gears/system/license-resolver/license-resolver-sdk",
     "gears/system/license-resolver/license-resolver",
@@ -295,6 +296,7 @@ types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.9
 tenant-resolver-sdk = { package = "cf-gears-tenant-resolver-sdk", version = "0.4.5", path = "gears/system/tenant-resolver/tenant-resolver-sdk" }
 authz-resolver-sdk = { package = "cf-gears-authz-resolver-sdk", version = "0.5.2", path = "gears/system/authz-resolver/authz-resolver-sdk" }
 oagw-sdk = { package = "cf-gears-oagw-sdk", version = "0.5.15", path = "gears/system/oagw/oagw-sdk" }
+mini-chat-sdk = { package = "cf-gears-mini-chat-sdk", version = "0.1.0", path = "gears/mini-chat/mini-chat-sdk" }
 
 # BSS gears (ported from vhp-core)
 # No `version` here, unlike the ledger and rate-provider SDKs around it, because
