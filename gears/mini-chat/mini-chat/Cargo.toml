@@ -31,6 +31,9 @@ authz-resolver-sdk = { workspace = true }
 # OAGW SDK — proxy calls, SSE stream, gateway errors
 oagw-sdk = { workspace = true }
 
+# Mini-chat SDK (plugin contracts, shared models)
+mini-chat-sdk = { workspace = true }
+
 # Types registry for plugin discovery
 types-registry-sdk = { workspace = true }
 types-registry = { workspace = true }
@@ -50,6 +53,10 @@ inventory = { workspace = true }
 tokio-retry = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
+tokio-stream = { workspace = true }
+parking_lot = { workspace = true }
+chrono = { workspace = true }
+mime = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
 multer = "3.1"
@@ -73,7 +80,7 @@ http = { workspace = true }
 time = { workspace = true }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }
@@ -105,8 +112,11 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
+tower = { workspace = true }
+http-body-util = { workspace = true }
+toolkit-db = { workspace = true, features = ["sqlite"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 
