@@ -1,0 +1,39 @@
+[package]
+name = "cf-gears-mini-chat-sdk"
+description = "SDK for the mini-chat gear: model catalog and policy contracts, usage and audit events, plugin client traits"
+version = "0.4.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords = ["constructorfabric", "cf-gears"]
+categories = ["artificial-intelligence"]
+metadata.docs.rs.all-features = true
+
+[lib]
+name = "mini_chat_sdk"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+schemars = { workspace = true }
+
+# GTS types for the plugin specs
+gts = { workspace = true }
+gts-macros = { workspace = true }
+toolkit-gts = { workspace = true }
+
+# ToolKit dependencies
+toolkit = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+uuid = { workspace = true, features = ["v4"] }
