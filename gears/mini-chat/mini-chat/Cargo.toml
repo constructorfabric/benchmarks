@@ -22,6 +22,8 @@ default = []
 k8s = ["dep:kube", "dep:k8s-openapi"]
 
 [dependencies]
+# Gear SDK: plugin contracts and shared types
+mini-chat-sdk = { workspace = true }
 # AuthN resolver for S2S client credentials exchange
 authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37", path = "../../system/authn-resolver/authn-resolver-sdk" }
 
@@ -50,6 +52,9 @@ inventory = { workspace = true }
 tokio-retry = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
+async-stream = { workspace = true }
+parking_lot = { workspace = true }
+http-body-util = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
 multer = "3.1"
@@ -71,9 +76,10 @@ http = { workspace = true }
 
 # Time handling
 time = { workspace = true }
+chrono = { workspace = true }
 
 # UUID support
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 # Database - SeaORM (driver features come from toolkit-db)
 sea-orm = { workspace = true }
@@ -105,6 +111,8 @@ kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"], opt
 k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 
 [dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+http-body-util = { workspace = true }
 chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
