@@ -1466,6 +1466,7 @@ name = "cf-gears-mini-chat"
 version = "0.4.5"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "axum",
  "base64 0.22.1",
@@ -1474,6 +1475,7 @@ dependencies = [
  "cf-gears-authn-resolver-sdk",
  "cf-gears-authz-resolver",
  "cf-gears-authz-resolver-sdk",
+ "cf-gears-mini-chat-sdk",
  "cf-gears-oagw",
  "cf-gears-oagw-sdk",
  "cf-gears-toolkit",
@@ -1483,6 +1485,7 @@ dependencies = [
  "cf-gears-toolkit-gts",
  "cf-gears-toolkit-macros",
  "cf-gears-toolkit-odata",
+ "cf-gears-toolkit-odata-macros",
  "cf-gears-toolkit-security",
  "cf-gears-types-registry",
  "cf-gears-types-registry-sdk",
@@ -1491,6 +1494,7 @@ dependencies = [
  "gts",
  "heck 0.5.0",
  "http",
+ "http-body-util",
  "image",
  "inventory",
  "k8s-openapi",
@@ -1509,10 +1513,28 @@ dependencies = [
  "time",
  "tokio",
  "tokio-retry",
+ "tokio-stream",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-opentelemetry",
  "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "cf-gears-mini-chat-sdk"
+version = "0.4.5"
+dependencies = [
+ "async-trait",
+ "cf-gears-toolkit",
+ "cf-gears-toolkit-gts",
+ "gts",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
  "uuid",
 ]
 
