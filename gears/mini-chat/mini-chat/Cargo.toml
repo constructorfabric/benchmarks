@@ -85,6 +85,9 @@ thiserror = { workspace = true }
 # Metrics / OpenTelemetry
 opentelemetry = { workspace = true }
 
+# mini-chat SDK: plugin contracts and shared policy types
+mini-chat-sdk = { package = "cf-gears-mini-chat-sdk", version = "0.1.0", path = "../mini-chat-sdk" }
+
 # Local dependencies
 toolkit = { workspace = true }
 toolkit-canonical-errors = { workspace = true, features = ["axum"] }
@@ -98,6 +101,8 @@ toolkit-db-macros = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-macros = { workspace = true }
 toolkit-odata = { workspace = true, features = ["with-utoipa"] }
+# `#[derive(ODataFilterable)]` for the filter and order fields of the chat list
+toolkit-odata-macros = { workspace = true }
 heck = { workspace = true }
 secrecy = { workspace = true }
 # k8s leader election (optional, behind k8s feature)
@@ -108,5 +113,13 @@ k8s-openapi = { workspace = true, features = ["latest"], optional = true }
 chrono = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 temp-env = { workspace = true }
+# Deterministic time (`start_paused`) for the PDP deadline test.
+tokio = { workspace = true, features = ["test-util"] }
+# `Router::oneshot` for the in-process REST tests.
+tower = { workspace = true, features = ["util"] }
+# `MockTypesRegistryClient` for plugin-resolution tests.
+types-registry-sdk = { workspace = true, features = ["test-util"] }
+# Log capture for the warning and error conventions (reconcile, audit, start checks).
+tracing-test = { workspace = true, features = ["no-env-filter"] }
 
 
