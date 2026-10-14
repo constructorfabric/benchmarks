@@ -4,7 +4,7 @@
 # testing/docker/docker-compose.yml. The build context is the repository root.
 #
 # Stage 1: Builder
-FROM rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS builder
+FROM rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS builder
 
 # Cargo features for the composed binary. ci.py forwards --features here;
 # empty means `default = []`, i.e. a server with no optional gears.
