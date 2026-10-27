@@ -1474,6 +1474,7 @@ dependencies = [
  "cf-gears-authn-resolver-sdk",
  "cf-gears-authz-resolver",
  "cf-gears-authz-resolver-sdk",
+ "cf-gears-mini-chat-sdk",
  "cf-gears-oagw",
  "cf-gears-oagw-sdk",
  "cf-gears-toolkit",
@@ -1483,7 +1484,9 @@ dependencies = [
  "cf-gears-toolkit-gts",
  "cf-gears-toolkit-macros",
  "cf-gears-toolkit-odata",
+ "cf-gears-toolkit-odata-macros",
  "cf-gears-toolkit-security",
+ "cf-gears-toolkit-utils",
  "cf-gears-types-registry",
  "cf-gears-types-registry-sdk",
  "chrono",
@@ -1498,6 +1501,7 @@ dependencies = [
  "multer",
  "opentelemetry",
  "opentelemetry_sdk",
+ "parking_lot",
  "regex",
  "sea-orm",
  "sea-orm-migration",
@@ -1513,6 +1517,25 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "cf-gears-mini-chat-sdk"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cf-gears-toolkit",
+ "cf-gears-toolkit-gts",
+ "cf-gears-toolkit-security",
+ "gts",
+ "schemars 1.2.1",
+ "serde",
+ "serde-saphyr 1.3.0",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
  "uuid",
 ]
 
