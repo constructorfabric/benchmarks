@@ -1,0 +1,52 @@
+# PR-Agent /review configuration for the CLLM-598 benchmark.
+# Loaded by run_review.py on top of PR-Agent's defaults; the model, the router URL
+# and the key come from the environment (see README.md).
+
+[config]
+git_provider = "local"
+publish_output = true
+verbosity_level = 0
+# The deepseek node is shared with a heavy batch client; 120k-token chunks took up to 1000 s there.
+ai_timeout = 1800
+fallback_models = []
+# PR-Agent caps every model at this value regardless of its real window (glm-5.3-flash
+# is served with 524k, deepseek-v4.1-flash with 1M). With 32000 (the default) PR #91
+# got 4 of 207 files into the prompt. 120k keeps one chunk at ~11 s of prefill on glm.
+max_model_tokens = 120000
+custom_model_max_tokens = 120000
+large_patch_policy = "clip"
+allow_dynamic_context = true
+patch_extra_lines_before = 5
+patch_extra_lines_after = 1
+
+[pr_reviewer]
+# The B9 PRs are 190k-1.7M tokens; without chunking one call sees a fraction of the diff.
+enable_large_pr_chunking = true
+max_number_of_calls = 40
+enable_review_coverage_footer = true
+# A per-module pass is told to go deep. 3 (the default) stops the model after three; with 15,
+# deepseek hit the cap in 41% of pilot calls; with no cap (0, which makes run_review.py drop the
+# range from the prompt) deepseek degenerated: 631 findings on PR #73 of which 143 distinct,
+# 60-250k output tokens per call, timeouts. glm never exceeded ~25 per chunk either way.
+num_max_findings = 30
+require_tests_review = false
+require_estimate_effort_to_review = false
+require_security_review = true
+require_ticket_analysis_review = false
+require_can_be_split_review = false
+require_score_review = false
+require_todo_scan = false
+persistent_comment = false
+persistent_finding_state = false
+final_update_message = false
+enable_review_labels_security = false
+enable_review_labels_effort = false
+enable_intro_text = false
+enable_help_text = false
+extra_instructions = ""
+
+[skills]
+enabled = false
+
+[local]
+# review_path is set per run by run_review.py

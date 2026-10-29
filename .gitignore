@@ -391,3 +391,10 @@ testing/e2e/logs/
 # Agent instruction files: never part of a benchmark solution, and code reviewers ingest them as guidelines
 CLAUDE.md
 AGENTS.md
+
+# PR-Agent benchmark runner (CLLM-598): generated prompts and raw results
+tools/pr-agent/instructions/
+tools/pr-agent/out/
+tools/pr-agent/.venv/
+tools/pr-agent/.env
+tools/pr-agent/.ruff_cache/
